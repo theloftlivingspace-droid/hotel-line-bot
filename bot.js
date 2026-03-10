@@ -36,14 +36,78 @@ async function scrapeReservations(targetDate) {
     // ── 1. Login ────────────────────────────────
     console.log("🔐 กำลัง Login...");
     await page.goto("https://app.littlehotelier.com/login", {
-      waitUntil: "networkidle",
-      timeout: 30000,
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
     });
 
-    await page.fill('input[type="email"], input[name="email"]', LH_EMAIL);
-    await page.fill('input[type="password"], input[name="password"]', LH_PASSWORD);
-    await page.click('button[type="submit"], .login-button, [data-action="submit"]');
-    await page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 });
+    // รอให้ form โหลดก่อน
+    await page.waitForTimeout(3000);
+
+    // dump HTML เพื่อ debug selectors
+    const html = await page.content();
+    const inputMatches = html.match(/<input[^>]*>/gi) || [];
+    console.log("📋 Input fields พบ:", inputMatches.slice(0, 10).join("
+"));
+
+    // กรอก email — ลอง selectors หลายแบบ
+    const emailSelectors = [
+      'input[type="email"]',
+      'input[name="email"]',
+      'input[name="user[email]"]',
+      'input[placeholder*="email" i]',
+      'input[placeholder*="Email" i]',
+      'input#email',
+    ];
+    for (const sel of emailSelectors) {
+      try {
+        await page.fill(sel, LH_EMAIL, { timeout: 3000 });
+        console.log("✅ email selector ใช้ได้:", sel);
+        break;
+      } catch {}
+    }
+
+    // กรอก password — ลอง selectors หลายแบบ
+    const passSelectors = [
+      'input[type="password"]',
+      'input[name="password"]',
+      'input[name="user[password]"]',
+      'input[placeholder*="password" i]',
+      'input[placeholder*="Password" i]',
+      'input#password',
+    ];
+    for (const sel of passSelectors) {
+      try {
+        await page.fill(sel, LH_PASSWORD, { timeout: 3000 });
+        console.log("✅ password selector ใช้ได้:", sel);
+        break;
+      } catch {}
+    }
+
+    // กดปุ่ม submit
+    const submitSelectors = [
+      'button[type="submit"]',
+      'input[type="submit"]',
+      'button:has-text("Sign in")',
+      'button:has-text("Log in")',
+      'button:has-text("Login")',
+      '.login-button',
+      '[data-action="submit"]',
+    ];
+    for (const sel of submitSelectors) {
+      try {
+        await page.click(sel, { timeout: 3000 });
+        console.log("✅ submit selector ใช้ได้:", sel);
+        break;
+      } catch {}
+    }
+
+    await page.waitForTimeout(5000);
+    const currentUrl = page.url();
+    console.log("📍 URL หลัง Login:", currentUrl);
+
+    if (currentUrl.includes("login")) {
+      throw new Error("Login ไม่สำเร็จ — ยังอยู่หน้า login");
+    }
 
     console.log("✅ Login สำเร็จ");
 
