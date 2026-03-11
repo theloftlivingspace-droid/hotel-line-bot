@@ -182,6 +182,9 @@ function startWebhookServer() {
 }
 
 console.log("Hotel LINE Bot v5 (Google Sheets) พร้อมทำงาน");
+console.log("GOOGLE_SHEET_ID:", process.env.GOOGLE_SHEET_ID || "(ไม่พบ)");
+console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่พบ)");
+console.log("GOOGLE_SERVICE_ACCOUNT_JSON:", process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? "OK ("+process.env.GOOGLE_SERVICE_ACCOUNT_JSON.length+" chars)" : "(ไม่พบ)");
 startWebhookServer();
 cron.schedule(CRON_SCHED, runJob, { timezone: "Asia/Bangkok" });
 if (process.argv.includes("--test")) { console.log("โหมดทดสอบ..."); runJob(); }
