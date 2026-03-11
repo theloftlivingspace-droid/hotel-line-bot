@@ -34,7 +34,7 @@ async function fetchSheetData() {
   const sheets = google.sheets({ version: "v4", auth });
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:E",
+    range: SHEET_NAME + "!A:F",
   });
 
   const rows = res.data.values || [];
@@ -58,16 +58,22 @@ function filterByDate(rows, targetDate) {
     const guest     = (row[1] || "").trim();
     const checkIn   = normalizeDate(row[2] || "");
     const checkOut  = normalizeDate(row[3] || "");
+    const channel   = (row[4] || "").trim();
+    const note      = (row[5] || "").trim();
 
     if (!room || !guest) continue;
 
+    // แสดง note เฉพาะกรณีไม่ใช่ Airbnb (ABB-xxxxxxx)
+    const isAirbnb = /ABB-/i.test(channel) || /ABB-/i.test(guest);
+    const displayNote = (!isAirbnb && note) ? note : "";
+
     if (checkIn === targetDate) {
-      checkIns.push({ room, guest });
-      console.log("เช็คอิน: ห้อง " + room + " - " + guest);
+      checkIns.push({ room, guest, note: displayNote });
+      console.log("เช็คอิน: ห้อง " + room + " - " + guest + (displayNote ? " [" + displayNote + "]" : ""));
     }
     if (checkOut === targetDate) {
-      checkOuts.push({ room, guest });
-      console.log("เช็คเอาท์: ห้อง " + room + " - " + guest);
+      checkOuts.push({ room, guest, note: displayNote });
+      console.log("เช็คเอาท์: ห้อง " + room + " - " + guest + (displayNote ? " [" + displayNote + "]" : ""));
     }
   }
 
@@ -103,6 +109,12 @@ function normalizeDate(str) {
   return str;
 }
 
+// ตรวจว่าจองผ่าน Airbnb ไหม (รหัส ABB-xxxxxxx)
+function isAirbnb(channel) {
+  if (!channel) return false;
+  return /ABB-/i.test(channel) || /airbnb/i.test(channel);
+}
+
 // ─────────────────────────────────────────────
 // สร้างข้อความ LINE
 // ─────────────────────────────────────────────
@@ -112,14 +124,14 @@ function buildMessage(checkIns, checkOuts, targetDate) {
 
   if (checkIns.length > 0) {
     msg += "\n✅ เช็คอิน (" + checkIns.length + " ห้อง)\n";
-    checkIns.forEach((r) => { msg += "  🔑 ห้อง " + r.room + "  —  " + r.guest + "\n"; });
+    checkIns.forEach((r) => { msg += "  🔑 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
   } else {
     msg += "\n✅ เช็คอิน : ไม่มี\n";
   }
 
   if (checkOuts.length > 0) {
     msg += "\n🚪 เช็คเอาท์ (" + checkOuts.length + " ห้อง)\n";
-    checkOuts.forEach((r) => { msg += "  🧹 ห้อง " + r.room + "  —  " + r.guest + "\n"; });
+    checkOuts.forEach((r) => { msg += "  🧹 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
   } else {
     msg += "\n🚪 เช็คเอาท์ : ไม่มี\n";
   }
