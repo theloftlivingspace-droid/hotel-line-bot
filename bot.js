@@ -64,6 +64,29 @@ async function scrapeReservations(targetDate) {
     }
     if (!emailOk) throw new Error("หา email input ไม่เจอ");
 
+    // กด Next / Continue ถ้าเป็น two-step login
+    const nextSelectors = [
+      'button:has-text("Next")',
+      'button:has-text("Continue")',
+      'button:has-text("ถัดไป")',
+      'input[type="submit"]',
+      'button[type="submit"]',
+    ];
+    for (const sel of nextSelectors) {
+      try {
+        await page.click(sel, { timeout: 2000 });
+        console.log("next/continue selector OK: " + sel);
+        await page.waitForTimeout(2000);
+        break;
+      } catch (_) {}
+    }
+
+    // log inputs อีกครั้งหลัง next step
+    const inputs2 = await page.$$eval("input", (els) =>
+      els.map((e) => "type=" + e.type + " name=" + e.name + " id=" + e.id)
+    );
+    console.log("Input fields (step2): " + inputs2.join(" | "));
+
     // กรอก password
     const passSelectors = [
       'input[type="password"]',
