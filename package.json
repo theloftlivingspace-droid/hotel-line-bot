@@ -1,17 +1,16 @@
 {
   "name": "hotel-housekeeping-line-bot",
-  "version": "2.0.0",
-  "description": "ส่งข้อมูลเช็คอิน/เช็คเอาท์ไปกลุ่มไลน์แม่บ้านทุกวัน 19:00 น.",
+  "version": "5.0.0",
+  "description": "ดึงข้อมูลจาก Google Sheets ส่งสรุปไปกลุ่มไลน์แม่บ้านทุกวัน 19:00",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "test": "node bot.js --test",
-    "install:browser": "npx playwright install chromium"
+    "test": "node bot.js --test"
   },
   "dependencies": {
     "axios": "^1.7.2",
     "dotenv": "^16.4.5",
-    "node-cron": "^3.0.3",
-    "playwright": "^1.44.0"
+    "googleapis": "^140.0.0",
+    "node-cron": "^3.0.3"
   }
 }
