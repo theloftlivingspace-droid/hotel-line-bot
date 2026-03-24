@@ -1,16 +1,19 @@
 {
   "name": "hotel-housekeeping-line-bot",
-  "version": "5.0.0",
-  "description": "ดึงข้อมูลจาก Google Sheets ส่งสรุปไปกลุ่มไลน์แม่บ้านทุกวัน 19:00",
+  "version": "6.0.0",
+  "description": "ดึงอีเมล Little Hotelier อัปเดต Google Sheet + ส่งสรุปไปกลุ่มไลน์แม่บ้าน",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "test": "node bot.js --test"
+    "test": "node bot.js --test",
+    "sync": "node email-sync.js --sync"
   },
   "dependencies": {
     "axios": "^1.7.2",
     "dotenv": "^16.4.5",
     "googleapis": "^140.0.0",
+    "imap": "^0.8.19",
+    "mailparser": "^3.7.1",
     "node-cron": "^3.0.3"
   }
 }

@@ -194,6 +194,9 @@ function startWebhookServer() {
 }
 
 console.log("Hotel LINE Bot v5 (Google Sheets) พร้อมทำงาน");
+
+// รัน email sync ด้วย
+require("./email-sync");
 console.log("GOOGLE_SHEET_ID:", process.env.GOOGLE_SHEET_ID || "(ไม่พบ)");
 console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่พบ)");
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON:", process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? "OK ("+process.env.GOOGLE_SERVICE_ACCOUNT_JSON.length+" chars)" : "(ไม่พบ)");
