@@ -184,7 +184,15 @@ function startWebhookServer() {
         try {
           const data = JSON.parse(body);
           (data.events || []).forEach((e) => {
+            // หา Group ID
             if (e.source && e.source.groupId) console.log("LINE_GROUP_ID: " + e.source.groupId);
+            // รับ reply เลขห้อง รูปแบบ: #ABB-XXXXXXXX 203
+            if (e.type === "message" && e.message && e.message.type === "text") {
+              const text = e.message.text || "";
+              if (text.startsWith("#")) {
+                handleLineReply(text).catch((err) => console.error("reply error:", err.message));
+              }
+            }
           });
         } catch (_) {}
         res.writeHead(200); res.end("OK");
@@ -196,7 +204,7 @@ function startWebhookServer() {
 console.log("Hotel LINE Bot v5 (Google Sheets) พร้อมทำงาน");
 
 // รัน email sync ด้วย
-require("./email-sync");
+const { syncEmails, handleLineReply } = require("./email-sync");
 console.log("GOOGLE_SHEET_ID:", process.env.GOOGLE_SHEET_ID || "(ไม่พบ)");
 console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่พบ)");
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON:", process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? "OK ("+process.env.GOOGLE_SERVICE_ACCOUNT_JSON.length+" chars)" : "(ไม่พบ)");
