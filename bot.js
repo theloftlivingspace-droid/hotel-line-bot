@@ -12,7 +12,6 @@ const { google } = require("googleapis");
 const axios      = require("axios");
 const cron       = require("node-cron");
 const http       = require("http");
-const { syncEmails, handleLineReply } = require("./email-sync");
 cron.schedule("*/30 * * * *", syncEmails, { timezone: "Asia/Bangkok" });
 
 const SHEET_ID   = process.env.GOOGLE_SHEET_ID;
