@@ -101,12 +101,9 @@ function parseEmail(email) {
   const text = email.text || "";
   const resMatch = text.match(/[A-Z]{2,4}-[A-Z0-9]{8,}/);
   const resId    = resMatch ? resMatch[0] : ("NOID-" + Date.now());
-  const pattern = /(.+?)\s+booked\s+the\s+(.+?)\s+for\s+(.+?)\s+to\s+(.+?)\s+on\s+(.+)/i;
-  const m = text.match(pattern);
-  if (!m) {
-  console.log("❌ parse ไม่ได้:\n", text);
-  return null;
-}
+  const pattern  = /(.+?)\s+booked\s+the\s+(.+?)\s+for\s+(.+?)\s+to\s+(.+?)\s+on\s+([^\n\r]+)/im;
+  const m        = text.match(pattern);
+  if (!m) return null;
 
   const checkIn  = isoDate(m[3].trim());
   const checkOut = isoDate(m[4].trim());
