@@ -457,6 +457,12 @@ async function handleImageMessage(event) {
       receivedAt: new Date().toISOString(),
     };
     const payments = await loadPayments(); payments.unshift(payment); await savePayments(payments.slice(0, 200));
+    // เก็บรูปแยกใน Redis key slip_img:{id} (TTL 90 วัน)
+    await fetch(`${REDIS_URL}/set/slip_img:${payment.id}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(["SET", `slip_img:${payment.id}`, base64, "EX", "7776000"])
+    });
 
     let replyText;
     if (!result.isSlip) replyText = `📸 ได้รับรูปภาพแล้วค่ะ\n\n🏠 ห้อง: ${roomList}\n\nเจ้าหน้าที่รับเรื่องแล้วและจะติดต่อกลับโดยเร็วที่สุดค่ะ 😊`;
