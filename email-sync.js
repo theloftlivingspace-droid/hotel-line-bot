@@ -314,6 +314,8 @@ async function syncEmails() {
     const emails = await fetchEmails(since);
 
     for (const email of emails) {
+        console.log("📩 SUBJECT:", email.subject);
+  console.log("📩 TEXT:", (email.text || "").slice(0, 300));
       const res = parseEmail(email);
       if (!res) continue;
       if (notifiedIds.has(res.resId)) { console.log("แจ้งไปแล้ว: " + res.resId); continue; }
