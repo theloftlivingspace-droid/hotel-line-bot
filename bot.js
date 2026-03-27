@@ -1,228 +1,692 @@
 /**
- * Hotel Housekeeping LINE Bot v5
- * ดึงข้อมูลจาก Google Sheets → ส่งสรุปวันพรุ่งนี้ไปกลุ่มไลน์แม่บ้าน
- * ทุกวัน 19:00 น.
+ * Hotel + Apartment LINE Bot (Merged v1)
+ * ─────────────────────────────────────
+ * Hotel features:
+ *   - แจ้งเช็คอิน/เอาท์ทุกวัน 19:00 → กลุ่มแม่บ้าน
+ *   - Email sync ทุก 30 นาที → แจ้งจองใหม่ → กลุ่มแม่บ้าน
+ *   - รับ reply เลขห้อง (#xxx) จากกลุ่มแม่บ้าน
  *
- * โครงสร้าง Google Sheet (row 1 = header):
- * A: เลขห้อง | B: ชื่อแขก | C: วันเช็คอิน (YYYY-MM-DD) | D: วันเช็คเอาท์ (YYYY-MM-DD) | E: ช่องทาง
+ * Apartment features:
+ *   - Follow → ลงทะเบียนห้อง (Redis/file)
+ *   - Rich Menu: ตรวจค่าเช่า, ส่งสลิป, ระเบียบ, เอกสาร, ติดต่อ
+ *   - รับสลิปรูป → verify AI → forward รูปไปกลุ่มแม่บ้าน
+ *   - Cron ส่งค่าเช่าวันที่ 5 และ 8-15
+ *
+ * Webhook รับทั้ง:
+ *   - source.type === "group"  → hotel (reply เลขห้อง)
+ *   - source.type === "user"   → apartment (ผู้เช่า 1:1)
  */
 
 require("dotenv").config();
+const http    = require("http");
+const crypto  = require("crypto");
+const fs      = require("fs");
+const path    = require("path");
+const fetch   = require("node-fetch");
+const cron    = require("node-cron");
 const { google } = require("googleapis");
-const axios      = require("axios");
-const cron       = require("node-cron");
-const http       = require("http");
 
-const SHEET_ID   = process.env.GOOGLE_SHEET_ID;
-const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || "Sheet1";
-const LINE_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-const LINE_GROUP = process.env.LINE_GROUP_ID;
-const CRON_SCHED = process.env.CRON_SCHEDULE || "0 19 * * *";
+// ─── ENV ────────────────────────────────────────────────────────
+const LINE_TOKEN    = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
+const LINE_SECRET   = process.env.LINE_CHANNEL_SECRET       || "";
+const LINE_GROUP    = process.env.LINE_GROUP_ID             || "";   // กลุ่มแม่บ้าน
+const SHEET_ID      = process.env.GOOGLE_SHEET_ID           || "";
+const SHEET_NAME    = process.env.GOOGLE_SHEET_NAME         || "Sheet1";
+const CRON_SCHED    = process.env.CRON_SCHEDULE             || "0 19 * * *";
+const PORT          = process.env.PORT                      || 3000;
 
-// ─────────────────────────────────────────────
-// Google Sheets — ดึงข้อมูล
-// ─────────────────────────────────────────────
-async function fetchSheetData() {
-  // ใช้ Service Account credentials จาก environment variable
+// Upstash Redis (apartment state)
+const REDIS_URL     = process.env.UPSTASH_REDIS_REST_URL    || "";
+const REDIS_TOKEN   = process.env.UPSTASH_REDIS_REST_TOKEN  || "";
+
+// ─── LINE helpers ───────────────────────────────────────────────
+async function linePush(to, messages) {
+  await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${LINE_TOKEN}` },
+    body: JSON.stringify({ to, messages }),
+  });
+}
+async function lineReply(replyToken, messages) {
+  await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${LINE_TOKEN}` },
+    body: JSON.stringify({ replyToken, messages }),
+  });
+}
+async function getLineProfile(userId) {
+  const res = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
+    headers: { Authorization: `Bearer ${LINE_TOKEN}` },
+  });
+  if (res.ok) return res.json();
+  return { displayName: "ผู้เช่า" };
+}
+async function downloadLineImage(messageId) {
+  const res = await fetch(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
+    headers: { Authorization: `Bearer ${LINE_TOKEN}` },
+  });
+  if (!res.ok) throw new Error(`ดาวน์โหลดรูปล้มเหลว: ${res.status}`);
+  return (await res.buffer()).toString("base64");
+}
+
+// ─── Redis helpers ──────────────────────────────────────────────
+async function redisGet(key) {
+  if (!REDIS_URL) return null;
+  try {
+    const res = await fetch(`${REDIS_URL}/get/${encodeURIComponent(key)}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+    });
+    const data = await res.json();
+    if (!data.result) return null;
+    return JSON.parse(data.result);
+  } catch { return null; }
+}
+async function redisSet(key, value) {
+  if (!REDIS_URL) return false;
+  try {
+    const res = await fetch(`${REDIS_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(JSON.stringify(value))}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+    });
+    const data = await res.json();
+    return data.result === "OK";
+  } catch (e) { console.error("Redis SET error:", e.message); return false; }
+}
+
+// ─── File helpers (fallback) ────────────────────────────────────
+const DATA_DIR      = path.join(__dirname, "data");
+const ROOMS_FILE    = path.join(DATA_DIR, "rooms.json");
+const USERS_FILE    = path.join(DATA_DIR, "users.json");
+const PAYMENTS_FILE = path.join(DATA_DIR, "payments.json");
+
+function ensureDir(p) { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
+function loadJSON(file, fallback) {
+  try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return fallback; }
+}
+function saveJSON(file, data) {
+  ensureDir(path.dirname(file));
+  try { fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8"); } catch {}
+}
+
+// ─── Apartment storage ──────────────────────────────────────────
+async function loadRooms() {
+  const r = await redisGet("rooms");
+  if (r) return r;
+  const fromFile = loadJSON(ROOMS_FILE, null);
+  if (fromFile) return fromFile;
+  return buildDefaultRooms();
+}
+async function saveRooms(r) { await redisSet("rooms", r); saveJSON(ROOMS_FILE, r); }
+async function loadUsers() { const u = await redisGet("users"); return u || loadJSON(USERS_FILE, {}); }
+async function saveUsers(u) { await redisSet("users", u); saveJSON(USERS_FILE, u); }
+async function loadPayments() { const p = await redisGet("payments"); return p || loadJSON(PAYMENTS_FILE, []); }
+async function savePayments(p) {
+  const meta = p.map(({ imageBase64, ...rest }) => rest);
+  await redisSet("payments", meta);
+  saveJSON(PAYMENTS_FILE, p);
+}
+
+// ─── Google Sheets (hotel) ──────────────────────────────────────
+function getSheets() {
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-
   const auth = new google.auth.GoogleAuth({
     credentials,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
-
-  const sheets = google.sheets({ version: "v4", auth });
+  return google.sheets({ version: "v4", auth });
+}
+async function fetchSheetData() {
+  const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range: SHEET_NAME + "!A:F",
   });
-
   const rows = res.data.values || [];
   console.log("ดึงข้อมูลจาก Google Sheets: " + (rows.length - 1) + " แถว");
   return rows;
 }
 
-// ─────────────────────────────────────────────
-// แยก check-in / check-out ของวันพรุ่งนี้
-// ─────────────────────────────────────────────
-function filterByDate(rows, targetDate) {
-  const checkIns  = [];
-  const checkOuts = [];
-
-  // ข้าม header row (row แรก)
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || row.length < 4) continue;
-
-    const room      = (row[0] || "").trim();
-    const guest     = (row[1] || "").trim();
-    const checkIn   = normalizeDate(row[2] || "");
-    const checkOut  = normalizeDate(row[3] || "");
-    const channel   = (row[4] || "").trim();
-    const note      = (row[5] || "").trim();
-
-    if (!room || !guest) continue;
-
-    // แสดง note เฉพาะกรณีไม่ใช่ Airbnb (ABB-xxxxxxx)
-    const isAirbnb = /ABB-/i.test(channel) || /ABB-/i.test(guest);
-    const displayNote = (!isAirbnb && note) ? note : "";
-
-    if (checkIn === targetDate) {
-      checkIns.push({ room, guest, note: displayNote });
-      console.log("เช็คอิน: ห้อง " + room + " - " + guest + (displayNote ? " [" + displayNote + "]" : ""));
-    }
-    if (checkOut === targetDate) {
-      checkOuts.push({ room, guest, note: displayNote });
-      console.log("เช็คเอาท์: ห้อง " + room + " - " + guest + (displayNote ? " [" + displayNote + "]" : ""));
-    }
-  }
-
-  return { checkIns, checkOuts };
-}
-
-// แปลงวันที่หลายรูปแบบ → YYYY-MM-DD
+// ═══════════════════════════════════════════════════════════════
+// HOTEL — daily checkin/checkout summary
+// ═══════════════════════════════════════════════════════════════
 function normalizeDate(str) {
   if (!str) return "";
   str = str.trim();
-
-  // YYYY-MM-DD แล้ว
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
-
-  // DD/MM/YYYY หรือ DD-MM-YYYY
   const dmy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (dmy) {
-    return dmy[3] + "-" + dmy[2].padStart(2,"0") + "-" + dmy[1].padStart(2,"0");
-  }
-
-  // MM/DD/YYYY
-  const mdy = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (mdy) {
-    return mdy[3] + "-" + mdy[1].padStart(2,"0") + "-" + mdy[2].padStart(2,"0");
-  }
-
-  // Google Sheets serial number (เช่น 46123)
+  if (dmy) return dmy[3] + "-" + dmy[2].padStart(2, "0") + "-" + dmy[1].padStart(2, "0");
   if (/^\d{5}$/.test(str)) {
     const d = new Date(Date.UTC(1899, 11, 30) + parseInt(str) * 86400000);
     return d.toISOString().slice(0, 10);
   }
-
   return str;
 }
-
-// ตรวจว่าจองผ่าน Airbnb ไหม (รหัส ABB-xxxxxxx)
-function isAirbnb(channel) {
-  if (!channel) return false;
-  return /ABB-/i.test(channel) || /airbnb/i.test(channel);
-}
-
-// ─────────────────────────────────────────────
-// สร้างข้อความ LINE
-// ─────────────────────────────────────────────
-function buildMessage(checkIns, checkOuts, targetDate) {
-  const sep = "─────────────────────────";
-  let msg = "\n🏨 รายการห้องพักวันพรุ่งนี้\n📅 " + formatThaiDate(targetDate) + "\n" + sep + "\n";
-
-  if (checkIns.length > 0) {
-    msg += "\n✅ เช็คอิน (" + checkIns.length + " ห้อง)\n";
-    checkIns.forEach((r) => { msg += "  🔑 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
-  } else {
-    msg += "\n✅ เช็คอิน : ไม่มี\n";
+function filterByDate(rows, targetDate) {
+  const checkIns = [], checkOuts = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length < 4) continue;
+    const room = (row[0] || "").trim(), guest = (row[1] || "").trim();
+    const checkIn = normalizeDate(row[2] || ""), checkOut = normalizeDate(row[3] || "");
+    const note = (row[5] || "").trim();
+    if (!room || !guest) continue;
+    const isAirbnb = /ABB-/i.test(row[4] || "") || /airbnb/i.test(row[4] || "");
+    const displayNote = (!isAirbnb && note) ? note : "";
+    if (checkIn === targetDate)  checkIns.push({ room, guest, note: displayNote });
+    if (checkOut === targetDate) checkOuts.push({ room, guest, note: displayNote });
   }
-
-  if (checkOuts.length > 0) {
-    msg += "\n🚪 เช็คเอาท์ (" + checkOuts.length + " ห้อง)\n";
-    checkOuts.forEach((r) => { msg += "  🧹 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
-  } else {
-    msg += "\n🚪 เช็คเอาท์ : ไม่มี\n";
-  }
-
-  msg += sep + "\n💌 ส่งอัตโนมัติโดยระบบโรงแรม";
-  return msg;
-}
-
-// ─────────────────────────────────────────────
-// ส่ง LINE
-// ─────────────────────────────────────────────
-async function sendLine(message) {
-  await axios.post(
-    "https://api.line.me/v2/bot/message/push",
-    { to: LINE_GROUP, messages: [{ type: "text", text: message }] },
-    { headers: { Authorization: "Bearer " + LINE_TOKEN, "Content-Type": "application/json" } }
-  );
-  console.log("ส่ง LINE สำเร็จ");
-}
-
-// ─────────────────────────────────────────────
-// MAIN JOB
-// ─────────────────────────────────────────────
-async function runJob() {
-  console.log("[" + new Date().toLocaleString("th-TH") + "] เริ่มทำงาน...");
-  try {
-    const tomorrow = getTomorrow();
-    console.log("วันเป้าหมาย: " + tomorrow);
-    const rows = await fetchSheetData();
-    const { checkIns, checkOuts } = filterByDate(rows, tomorrow);
-    const msg = buildMessage(checkIns, checkOuts, tomorrow);
-    console.log("ข้อความ:\n" + msg);
-    await sendLine(msg);
-  } catch (err) {
-    console.error("Error: " + err.message);
-    try { await sendLine("⚠️ ระบบแจ้งเตือนแม่บ้านขัดข้อง\n" + err.message); } catch (_) {}
-  }
-}
-
-// ─────────────────────────────────────────────
-// Webhook + Scheduler
-// ─────────────────────────────────────────────
-function startWebhookServer() {
-  const PORT = process.env.PORT || 3000;
-  http.createServer((req, res) => {
-    if (req.method === "POST" && req.url === "/webhook") {
-      let body = "";
-      req.on("data", (c) => { body += c; });
-      req.on("end", () => {
-        try {
-          const data = JSON.parse(body);
-          (data.events || []).forEach((e) => {
-            // หา Group ID
-            if (e.source && e.source.groupId) console.log("LINE_GROUP_ID: " + e.source.groupId);
-            // รับ reply เลขห้อง รูปแบบ: #ABB-XXXXXXXX 203
-            if (e.type === "message" && e.message && e.message.type === "text") {
-              const text = e.message.text || "";
-              if (text.startsWith("#")) {
-                handleLineReply(text).catch((err) => console.error("reply error:", err.message));
-              }
-            }
-          });
-        } catch (_) {}
-        res.writeHead(200); res.end("OK");
-      });
-    } else { res.writeHead(200); res.end("Hotel LINE Bot running"); }
-  }).listen(PORT, () => console.log("Webhook port " + PORT));
-}
-
-console.log("Hotel LINE Bot v5 (Google Sheets) พร้อมทำงาน");
-
-// รัน email sync ด้วย
-const { syncEmails, handleLineReply } = require("./email-sync");
-console.log("GOOGLE_SHEET_ID:", process.env.GOOGLE_SHEET_ID || "(ไม่พบ)");
-console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่พบ)");
-console.log("GOOGLE_SERVICE_ACCOUNT_JSON:", process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? "OK ("+process.env.GOOGLE_SERVICE_ACCOUNT_JSON.length+" chars)" : "(ไม่พบ)");
-startWebhookServer();
-cron.schedule(CRON_SCHED, runJob, { timezone: "Asia/Bangkok" });
-if (process.argv.includes("--test")) { console.log("โหมดทดสอบ..."); runJob(); }
-
-// ─────────────────────────────────────────────
-// UTILS
-// ─────────────────────────────────────────────
-function getTomorrow() {
-  const d = new Date(); d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
+  return { checkIns, checkOuts };
 }
 function formatThaiDate(iso) {
-  const M = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน",
-             "กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
+  const M = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
   const D = ["อาทิตย์","จันทร์","อังคาร","พุธ","พฤหัสบดี","ศุกร์","เสาร์"];
   const d = new Date(iso + "T00:00:00");
   return "วัน" + D[d.getDay()] + "ที่ " + d.getDate() + " " + M[d.getMonth()] + " " + (d.getFullYear() + 543);
+}
+function buildHotelMessage(checkIns, checkOuts, targetDate) {
+  const sep = "─────────────────────────";
+  let msg = "\n🏨 รายการห้องพักวันพรุ่งนี้\n📅 " + formatThaiDate(targetDate) + "\n" + sep + "\n";
+  if (checkIns.length > 0) {
+    msg += "\n✅ เช็คอิน (" + checkIns.length + " ห้อง)\n";
+    checkIns.forEach(r => { msg += "  🔑 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
+  } else { msg += "\n✅ เช็คอิน : ไม่มี\n"; }
+  if (checkOuts.length > 0) {
+    msg += "\n🚪 เช็คเอาท์ (" + checkOuts.length + " ห้อง)\n";
+    checkOuts.forEach(r => { msg += "  🧹 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
+  } else { msg += "\n🚪 เช็คเอาท์ : ไม่มี\n"; }
+  msg += sep + "\n💌 ส่งอัตโนมัติโดยระบบโรงแรม";
+  return msg;
+}
+async function runHotelJob() {
+  console.log("[" + new Date().toLocaleString("th-TH") + "] เริ่มส่งสรุปแม่บ้าน...");
+  try {
+    const tomorrow = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
+    const rows = await fetchSheetData();
+    const { checkIns, checkOuts } = filterByDate(rows, tomorrow);
+    const msg = buildHotelMessage(checkIns, checkOuts, tomorrow);
+    await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    console.log("ส่ง LINE สำเร็จ");
+  } catch (err) {
+    console.error("Hotel job error: " + err.message);
+    try { await linePush(LINE_GROUP, [{ type: "text", text: "⚠️ ระบบแจ้งเตือนแม่บ้านขัดข้อง\n" + err.message }]); } catch (_) {}
+  }
+}
+
+// ─── Hotel: reply เลขห้องจากกลุ่ม ──────────────────────────────
+async function updateRoomInSheet(sheets, resId, roomNumber) {
+  const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:E" });
+  const rows = result.data.values || [];
+  for (let i = 1; i < rows.length; i++) {
+    if ((rows[i][4] || "").trim() === resId) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A" + (i + 1),
+        valueInputOption: "RAW", requestBody: { values: [[roomNumber]] },
+      });
+      return rows[i][1] || resId;
+    }
+  }
+  return null;
+}
+async function handleGroupReply(text) {
+  // รูปแบบ: ตอบกลับแค่ตัวเลข
+  const match = text.trim().match(/^(?:ห้อง\s*)?(\d{2,3}\w*)$/);
+  if (!match) return;
+  const roomNumber = match[1];
+  const sheets = getSheets();
+  const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:E" });
+  const rows = result.data.values || [];
+  let resId = "";
+  for (let i = rows.length - 1; i >= 1; i--) {
+    if ((rows[i][0] || "").trim() === "รอยืนยัน") { resId = (rows[i][4] || "").trim(); break; }
+  }
+  if (!resId) { console.log("ไม่มีการจองที่รอยืนยัน"); return; }
+  try {
+    const guest = await updateRoomInSheet(sheets, resId, roomNumber);
+    if (guest) {
+      const msg = "✅ อัปเดตแล้ว!\n" + guest + "\nห้อง " + roomNumber + " (" + resId + ")";
+      await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    }
+  } catch (err) { console.error("group reply error: " + err.message); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// APARTMENT — room registration & rich menu
+// ═══════════════════════════════════════════════════════════════
+function floorButtons(rooms) {
+  const floors = [...new Set(Object.keys(rooms).map(r => r[0]))].sort();
+  return {
+    type: "text", text: "กรุณาเลือกชั้นของคุณ 👇",
+    quickReply: { items: floors.map(f => ({ type: "action", action: { type: "message", label: `ชั้น ${f}`, text: `ชั้น${f}` } })) },
+  };
+}
+function roomButtons(floor, rooms) {
+  const floorRooms = Object.values(rooms)
+    .filter(r => r.roomNumber[0] === floor && !r.lineUserId)
+    .sort((a, b) => a.roomNumber.localeCompare(b.roomNumber));
+  if (!floorRooms.length) return [{ type: "text", text: `ชั้น ${floor} ทุกห้องลงทะเบียนครบแล้วค่ะ 🎉\nหากต้องการแก้ไข กรุณาพิมพ์เลขห้องได้เลยค่ะ` }];
+  const chunkSize = 8;
+  const chunks = [];
+  for (let i = 0; i < floorRooms.length; i += chunkSize) chunks.push(floorRooms.slice(i, i + chunkSize));
+  const bubbles = chunks.map((chunk, idx) => ({
+    type: "bubble", size: "micro",
+    header: { type: "box", layout: "vertical", backgroundColor: "#0d9488", contents: [{ type: "text", text: `ชั้น ${floor}${chunks.length > 1 ? ` (${idx + 1}/${chunks.length})` : ""}`, color: "#ffffff", size: "sm", weight: "bold" }] },
+    body: { type: "box", layout: "vertical", spacing: "sm", paddingAll: "8px", contents: chunk.map(r => ({ type: "button", style: "secondary", height: "sm", action: { type: "message", label: `ห้อง ${r.roomNumber}`, text: `room:${r.roomNumber}` } })) },
+  }));
+  return [{ type: "flex", altText: `เลือกห้องชั้น ${floor}`, contents: { type: "carousel", contents: bubbles } }];
+}
+function confirmButtons(roomNum, tenantName) {
+  return {
+    type: "text",
+    text: `ยืนยันการลงทะเบียนค่ะ\n\n🏠 ห้อง: ${roomNum}\n👤 ชื่อ: ${tenantName || "(ยังไม่ระบุ)"}\n\nพิมพ์ "ยืนยัน" เพื่อยืนยัน\nหรือพิมพ์เลขห้องใหม่เพื่อแก้ไขค่ะ`,
+    quickReply: { items: [
+      { type: "action", action: { type: "message", label: "✅ ยืนยัน",    text: "confirm:yes" } },
+      { type: "action", action: { type: "message", label: "❌ เลือกใหม่", text: "confirm:no"  } },
+    ]},
+  };
+}
+
+async function setRichMenuForUser(userId) {
+  const idFile = path.join(__dirname, "data", "richmenu-id.txt");
+  if (!fs.existsSync(idFile)) return;
+  const richMenuId = fs.readFileSync(idFile, "utf8").trim();
+  if (!richMenuId) return;
+  try {
+    await fetch(`https://api.line.me/v2/bot/user/${userId}/richmenu/${richMenuId}`, {
+      method: "POST", headers: { Authorization: `Bearer ${LINE_TOKEN}` },
+    });
+  } catch (e) { console.error("[RichMenu Error]", e.message); }
+}
+
+async function verifySlipWithAI(base64Image, expectedAmount) {
+  if (!process.env.ANTHROPIC_API_KEY) return { isSlip: false, amount: null };
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-opus-4-6", max_tokens: 300,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64Image } },
+        { type: "text", text: `สลิปโอนเงิน ตอบ JSON เท่านั้น:\n{"isSlip":bool,"amount":number_or_null,"bankName":"string","toAccount":"string","date":"string"}\nยอดที่คาดหวัง: ${expectedAmount} บาท` },
+      ]}],
+    }),
+  });
+  if (!res.ok) return { isSlip: false, amount: null };
+  const data = await res.json();
+  try { return JSON.parse(data.content?.[0]?.text?.replace(/```json|```/g, "").trim() || "{}"); }
+  catch { return { isSlip: false, amount: null }; }
+}
+
+// ─── Apartment event handlers ────────────────────────────────────
+async function handleFollow(event) {
+  const { userId } = event.source;
+  const users = await loadUsers(), rooms = await loadRooms();
+  const profile = await getLineProfile(userId);
+  users[userId] = { userId, displayName: profile.displayName, state: "WAIT_FLOOR", pendingFloor: null, pendingRoom: null,
+    roomNumber: users[userId]?.roomNumber || null, registeredAt: users[userId]?.registeredAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+  await saveUsers(users);
+  await lineReply(event.replyToken, [
+    { type: "text", text: `สวัสดีค่ะ คุณ${profile.displayName} 👋\n\nยินดีต้อนรับสู่ระบบบริการผู้พักอาศัยค่ะ\nกรุณาเลือกชั้นและห้องของคุณด้านล่างเพื่อลงทะเบียนค่ะ` },
+    floorButtons(rooms),
+  ]);
+  console.log(`[Follow] ${profile.displayName} (${userId})`);
+}
+
+async function handleUnfollow(event) {
+  const { userId } = event.source;
+  const rooms = await loadRooms(), users = await loadUsers();
+  const user = users[userId];
+  if (user?.roomNumber && rooms[user.roomNumber]) { rooms[user.roomNumber].lineUserId = ""; await saveRooms(rooms); }
+  if (users[userId]) { users[userId].state = "INACTIVE"; users[userId].updatedAt = new Date().toISOString(); await saveUsers(users); }
+}
+
+async function handleUserMessage(event) {
+  const { userId } = event.source;
+  const text = event.message.text?.trim() || "";
+  const users = await loadUsers(), rooms = await loadRooms();
+  let user = users[userId];
+  if (!user) {
+    const profile = await getLineProfile(userId);
+    user = users[userId] = { userId, displayName: profile.displayName, state: "WAIT_FLOOR", pendingFloor: null, pendingRoom: null, roomNumber: null };
+  }
+
+  const floorMatch = text.match(/^ชั้น(\d)/);
+  if (floorMatch) {
+    users[userId].state = "WAIT_ROOM"; users[userId].pendingFloor = floorMatch[1]; users[userId].updatedAt = new Date().toISOString();
+    await saveUsers(users);
+    await lineReply(event.replyToken, roomButtons(floorMatch[1], rooms));
+    return;
+  }
+
+  const roomMatch = text.match(/^room:(\w+)/);
+  if (roomMatch) {
+    const roomNum = roomMatch[1];
+    if (!rooms[roomNum]) { await lineReply(event.replyToken, [{ type: "text", text: `ไม่พบห้อง ${roomNum} ค่ะ` }]); return; }
+    const existing = rooms[roomNum].lineUserId;
+    if (existing && existing !== userId) { await lineReply(event.replyToken, [{ type: "text", text: `ห้อง ${roomNum} ถูกลงทะเบียนไปแล้วค่ะ\nกรุณาติดต่อผู้จัดการอาคารค่ะ` }]); return; }
+    users[userId].state = "CONFIRM_ROOM"; users[userId].pendingRoom = roomNum; users[userId].updatedAt = new Date().toISOString();
+    await saveUsers(users);
+    await lineReply(event.replyToken, [confirmButtons(roomNum, rooms[roomNum].tenantName)]);
+    return;
+  }
+
+  const directRoomMatch = text.match(/^(\d{3,4})$/);
+  if (directRoomMatch) {
+    const roomNum = directRoomMatch[1];
+    if (!rooms[roomNum]) { await lineReply(event.replyToken, [{ type: "text", text: `ไม่พบห้อง ${roomNum} ในระบบค่ะ\nกรุณาตรวจสอบเลขห้องและลองใหม่อีกครั้งค่ะ` }]); return; }
+    const existing = rooms[roomNum].lineUserId;
+    if (existing && existing !== userId) { await lineReply(event.replyToken, [{ type: "text", text: `ห้อง ${roomNum} ถูกลงทะเบียนไปแล้วค่ะ\nกรุณาติดต่อผู้จัดการอาคารค่ะ` }]); return; }
+    users[userId].state = "CONFIRM_ROOM"; users[userId].pendingRoom = roomNum; users[userId].updatedAt = new Date().toISOString();
+    await saveUsers(users);
+    await lineReply(event.replyToken, [confirmButtons(roomNum, rooms[roomNum].tenantName)]);
+    return;
+  }
+
+  if (text === "confirm:yes" && user.state === "CONFIRM_ROOM") {
+    const roomNum = user.pendingRoom;
+    rooms[roomNum].lineUserId = userId; await saveRooms(rooms);
+    users[userId].state = "REGISTERED"; users[userId].roomNumber = roomNum; users[userId].pendingRoom = null; users[userId].updatedAt = new Date().toISOString();
+    await saveUsers(users);
+    await lineReply(event.replyToken, [{ type: "text", text: `✅ ลงทะเบียนห้อง ${roomNum} สำเร็จแล้วค่ะ\n\nคุณจะได้รับการแจ้งเตือนค่าเช่าทาง LINE ทุกเดือนอัตโนมัติค่ะ` }]);
+    console.log(`[Registered] ห้อง ${roomNum} <- ${userId}`);
+    setRichMenuForUser(userId);
+    return;
+  }
+  if (text === "confirm:no") {
+    users[userId].state = "WAIT_FLOOR"; users[userId].pendingRoom = null; users[userId].updatedAt = new Date().toISOString();
+    await saveUsers(users);
+    await lineReply(event.replyToken, [floorButtons(rooms)]);
+    return;
+  }
+  if (text === "เปลี่ยนห้อง" || text === "แก้ไขห้อง" || text === "ลงทะเบียน") {
+    users[userId].state = "WAIT_FLOOR"; await saveUsers(users);
+    await lineReply(event.replyToken, [floorButtons(rooms)]);
+    return;
+  }
+
+  if (user.state === "WAIT_DOC_REQUEST") {
+    users[userId].state = "REGISTERED"; await saveUsers(users);
+    const roomNum = user.roomNumber || "ไม่ระบุ";
+    await lineReply(event.replyToken, [{ type: "text", text: `✅ รับเรื่องขอเอกสารแล้วค่ะ\n\nห้อง: ${roomNum}\nเอกสารที่ต้องการ: ${text}\n\nเจ้าหน้าที่จะดำเนินการและแจ้งให้ทราบภายใน 1-2 วันทำการค่ะ 😊` }]);
+    return;
+  }
+  if (user.state === "WAIT_CONTACT_MSG") {
+    if (text === "แจ้งย้ายออก" || text.includes("ย้ายออก")) {
+      users[userId].state = "WAIT_MOVEOUT_DATE"; await saveUsers(users);
+      await lineReply(event.replyToken, [{ type: "text", text: `📦 แจ้งย้ายออกห้อง ${user.roomNumber || "ไม่ระบุ"} ค่ะ\n\nกรุณาระบุวันที่ต้องการย้ายออกค่ะ\nเช่น: ย้ายออกวันที่ 31 พฤษภาคม 2569\n\nพิมพ์รายละเอียดได้เลยค่ะ 👇` }]);
+      return;
+    }
+    users[userId].state = "REGISTERED"; await saveUsers(users);
+    const roomNum = user.roomNumber || "ไม่ระบุ";
+    await lineReply(event.replyToken, [{ type: "text", text: `✅ รับเรื่องแล้วค่ะ\n\nห้อง: ${roomNum}\nเรื่อง: ${text}\n\nเจ้าหน้าที่จะติดต่อกลับโดยเร็วที่สุดค่ะ 😊` }]);
+    return;
+  }
+  if (user.state === "WAIT_MOVEOUT_DATE") {
+    users[userId].state = "REGISTERED"; await saveUsers(users);
+    const roomNum = user.roomNumber || "ไม่ระบุ";
+    await lineReply(event.replyToken, [{ type: "text",
+      text: `✅ รับแจ้งย้ายออกเป็นลายลักษณ์อักษรแล้วค่ะ\n\n🏠 ห้อง: ${roomNum}\n👤 ชื่อ: ${rooms[roomNum]?.tenantName || "ไม่ระบุ"}\n📅 รายละเอียด: ${text}\n\nเจ้าหน้าที่จะติดต่อกลับเพื่อนัดหมายตรวจสอบห้องค่ะ 😊` }]);
+    return;
+  }
+
+  if (user.state === "REGISTERED") {
+    await lineReply(event.replyToken, [{ type: "text", text: `คุณลงทะเบียนห้อง ${user.roomNumber} เรียบร้อยแล้วค่ะ\nหากต้องการเปลี่ยนห้อง พิมพ์ "เปลี่ยนห้อง" ได้เลยค่ะ` }]);
+    return;
+  }
+  users[userId].state = "WAIT_FLOOR"; await saveUsers(users);
+  await lineReply(event.replyToken, [{ type: "text", text: "กรุณาเลือกชั้นของคุณค่ะ" }, floorButtons(rooms)]);
+}
+
+async function handleImageMessage(event) {
+  const { userId } = event.source;
+  const users = await loadUsers(), rooms = await loadRooms();
+  const user = users[userId];
+  if (!user?.roomNumber) { await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนส่งสลิปค่ะ" }]); return; }
+  const myRooms = Object.values(rooms).filter(r => r.lineUserId === userId);
+  const roomList = myRooms.map(r => r.roomNumber).join(", ");
+  const totalAmount = myRooms.reduce((s, r) => s + Number(r.amount), 0);
+  try {
+    const base64 = await downloadLineImage(event.message.id);
+    const result = await verifySlipWithAI(base64, totalAmount);
+    const slipAmount = result.amount ? Number(result.amount) : null;
+    const amountMatch = slipAmount !== null && Math.abs(slipAmount - totalAmount) < 1;
+    const payment = {
+      id: Date.now().toString(), roomNumber: roomList, tenantName: rooms[user.roomNumber]?.tenantName,
+      userId, messageId: event.message.id, imageBase64: base64,
+      slipAmount, expectedAmount: totalAmount, amountMatch,
+      isSlip: result.isSlip, bankName: result.bankName || null, date: result.date || null,
+      status: (result.isSlip && amountMatch) ? "confirmed" : "pending_review",
+      receivedAt: new Date().toISOString(),
+    };
+    const payments = await loadPayments(); payments.unshift(payment); await savePayments(payments.slice(0, 200));
+
+    let replyText;
+    if (!result.isSlip) replyText = `📸 ได้รับรูปภาพแล้วค่ะ\n\n🏠 ห้อง: ${roomList}\n\nเจ้าหน้าที่รับเรื่องแล้วและจะติดต่อกลับโดยเร็วที่สุดค่ะ 😊`;
+    else if (amountMatch) replyText = `✅ ได้รับสลิปเรียบร้อยค่ะ\n\n🏠 ห้อง: ${roomList}\nยอดโอน: ${slipAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท\n${result.bankName ? `ธนาคาร: ${result.bankName}\n` : ""}ทีมงานจะตรวจสอบและยืนยันภายใน 24 ชั่วโมงค่ะ`;
+    else replyText = `⚠️ ยอดเงินไม่ตรงค่ะ\n\n🏠 ห้อง: ${roomList}\nยอดในสลิป: ${slipAmount?.toLocaleString("th-TH", { minimumFractionDigits: 2 }) ?? "ไม่พบ"} บาท\nยอดที่ต้องชำระ: ${totalAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท\n\nกรุณาติดต่อเจ้าหน้าที่ค่ะ`;
+    await linePush(userId, [{ type: "text", text: replyText }]);
+  } catch (e) {
+    console.error("[Slip Error]", e.message);
+    await linePush(userId, [{ type: "text", text: "เกิดข้อผิดพลาด กรุณาลองใหม่หรือติดต่อเจ้าหน้าที่ค่ะ" }]);
+  }
+}
+
+async function handlePostback(event) {
+  const { userId } = event.source;
+  const data = event.postback?.data || "";
+  const users = await loadUsers(), rooms = await loadRooms();
+  const user = users[userId];
+  const room = user?.roomNumber ? rooms[user.roomNumber] : null;
+
+  if (data === "action=CHECK_RENT") {
+    const myRooms = Object.values(rooms).filter(r => r.lineUserId === userId);
+    if (!myRooms.length) { await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนนะคะ" }]); return; }
+    if (myRooms.length === 1) {
+      const r = myRooms[0];
+      await lineReply(event.replyToken, [
+        { type: "text", text: `📋 ข้อมูลค่าเช่าห้อง ${r.roomNumber} ค่ะ\n\nยอดค่าเช่าเดือนนี้: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` },
+        { type: "template", altText: "ดูใบแจ้งหนี้", template: { type: "buttons", text: `ใบแจ้งหนี้ห้อง ${r.roomNumber}`, actions: [{ type: "uri", label: "ดูใบแจ้งหนี้", uri: r.invoiceLink }] } },
+      ]);
+    } else {
+      const summary = myRooms.map(r => `🏠 ห้อง ${r.roomNumber}: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`).join("\n");
+      const total = myRooms.reduce((s, r) => s + Number(r.amount), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 });
+      await lineReply(event.replyToken, [{ type: "text", text: `📋 ข้อมูลค่าเช่าทุกห้องของคุณค่ะ\n\n${summary}\n\nรวมทั้งหมด: ${total} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` }]);
+    }
+    return;
+  }
+  if (data === "action=SEND_SLIP") {
+    const myRooms = Object.values(rooms).filter(r => r.lineUserId === userId);
+    if (!myRooms.length) { await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนนะคะ" }]); return; }
+    users[userId].state = "WAIT_SLIP"; await saveUsers(users);
+    const total = myRooms.reduce((s, r) => s + Number(r.amount), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 });
+    await lineReply(event.replyToken, [{ type: "text", text: `💳 ส่งหลักฐานการชำระเงินค่ะ\n\nยอดรวมที่ต้องชำระ: ${total} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน\n\nกรุณาถ่ายรูปหรืออัปโหลดสลิปการโอนเงินได้เลยค่ะ 👇` }]);
+    return;
+  }
+  if (data === "action=REQUEST_DOC") {
+    if (!room) { await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนนะคะ" }]); return; }
+    users[userId].state = "WAIT_DOC_REQUEST"; await saveUsers(users);
+    await lineReply(event.replyToken, [{ type: "text", text: `📄 ขอเอกสารค่ะ\n\nกรุณาพิมพ์เอกสารที่ต้องการ เช่น\n- หนังสือรับรองการพักอาศัย\n- ใบเสร็จย้อนหลัง\n- สัญญาเช่า\n\nพิมพ์รายละเอียดได้เลยค่ะ 👇` }]);
+    return;
+  }
+  if (data === "action=CONTACT") {
+    users[userId].state = "WAIT_CONTACT_MSG"; await saveUsers(users);
+    await lineReply(event.replyToken, [{ type: "text", text: `📞 ติดต่อเจ้าหน้าที่ค่ะ\n\nกรุณาพิมพ์เรื่องที่ต้องการสอบถามหรือแจ้งปัญหาได้เลยค่ะ\nเจ้าหน้าที่จะตอบกลับโดยเร็วที่สุดค่ะ 😊` }]);
+    return;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// APARTMENT — rent reminder
+// ═══════════════════════════════════════════════════════════════
+async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
+  const now = new Date(), day = forceDay || now.getDate();
+  const month = now.getMonth() + 1, year = now.getFullYear();
+  if (!isTest && !onlyRoom && day !== 5 && (day < 8 || day > 15)) return;
+  try {
+    const rooms = await loadRooms(), payments = await loadPayments();
+    const paidRooms = new Set(
+      isTest ? [] :
+      payments
+        .filter(p => { if (p.status !== "confirmed") return false; const d = new Date(p.receivedAt); return d.getMonth() + 1 === month && d.getFullYear() === year; })
+        .flatMap(p => p.roomNumber.split(",").map(r => r.trim()))
+    );
+    const unpaidRooms = Object.values(rooms).filter(r => r.lineUserId && !paidRooms.has(r.roomNumber) && (!onlyRoom || r.roomNumber === onlyRoom));
+    if (!unpaidRooms.length) { console.log(`[Reminder] วันที่ ${day} — ทุกห้องชำระแล้ว ✓`); return; }
+    for (const room of unpaidRooms) {
+      const amount = Number(room.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 });
+      let msg = "";
+      if (day === 5) {
+        msg = `⚠️ แจ้งเตือนค่าเช่าห้อง ${room.roomNumber} ค่ะ\n\nยอดค่าเช่าเดือนนี้: ${amount} บาท\nกำหนดชำระ: วันที่ 7 ของเดือนนี้\n\n⏰ กรุณาชำระภายในวันที่ 7 ค่ะ\nหากเกินกำหนดจะมีค่าปรับ 100 บาท/วัน\n\nโอนผ่านบัญชีธนาคาร:\n• SCB 353-2-05292-9\n• KBank 799-2-39682-9\nชื่อบัญชี: ณัฐวุฒิ จงจิตตาภิบาล\n\nชำระแล้วกรุณาส่งสลิปในแชทนี้ด้วยนะคะ 🙏`;
+      } else if (day >= 8 && day <= 15) {
+        const overdueDays = day - 7, fine = overdueDays * 100;
+        const total = (Number(room.amount) + fine).toLocaleString("th-TH", { minimumFractionDigits: 2 });
+        const fineStr = fine.toLocaleString("th-TH");
+        if (day === 15) {
+          msg = `🚨 แจ้งเตือนขั้นสุดท้าย ห้อง ${room.roomNumber} ค่ะ\n\nค่าเช่า: ${amount} บาท\nค่าปรับ (${overdueDays} วัน × 100): ${fineStr} บาท\n──────────────────\nยอดรวมที่ต้องชำระ: ${total} บาท\n\n⚠️ กรุณาชำระค่าเช่าพร้อมค่าปรับภายในวันนี้ค่ะ\n\nโอนผ่านบัญชีธนาคาร:\n• SCB 353-2-05292-9\n• KBank 799-2-39682-9\nชื่อบัญชี: ณัฐวุฒิ จงจิตตาภิบาล\n\nชำระแล้วกรุณาส่งสลิปในแชทนี้ด้วยนะคะ 🙏`;
+        } else {
+          msg = `🔴 แจ้งเตือนค่าเช่าเกินกำหนด ห้อง ${room.roomNumber} ค่ะ\n\nค่าเช่า: ${amount} บาท\nค่าปรับ (${overdueDays} วัน × 100): ${fineStr} บาท\n──────────────────\nยอดรวมที่ต้องชำระ: ${total} บาท\n\nกรุณาชำระโดยด่วนค่ะ โอนผ่านบัญชีธนาคาร:\n• SCB 353-2-05292-9\n• KBank 799-2-39682-9\nชื่อบัญชี: ณัฐวุฒิ จงจิตตาภิบาล\n\nชำระแล้วกรุณาส่งสลิปในแชทนี้ด้วยนะคะ 🙏`;
+        }
+      }
+      if (msg) {
+        try { await linePush(room.lineUserId, [{ type: "text", text: msg }]); console.log(`[Reminder] ส่งเตือนห้อง ${room.roomNumber} วันที่ ${day}`); }
+        catch (e) { console.error(`[Reminder] ส่งไม่สำเร็จห้อง ${room.roomNumber}:`, e.message); }
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+  } catch (e) { console.error("[Reminder Error]", e.message); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// WEBHOOK SERVER
+// ═══════════════════════════════════════════════════════════════
+function verifySignature(rawBody, signature) {
+  if (!LINE_SECRET) return true;
+  const hash = crypto.createHmac("SHA256", LINE_SECRET).update(rawBody).digest("base64");
+  return hash === signature;
+}
+
+function startWebhookServer() {
+  http.createServer((req, res) => {
+    if (req.method === "GET") { res.writeHead(200); res.end("Hotel + Apartment LINE Bot running"); return; }
+    if (req.method !== "POST" || req.url !== "/webhook") { res.writeHead(200); res.end("OK"); return; }
+
+    let body = "";
+    req.on("data", c => { body += c; });
+    req.on("end", () => {
+      if (!verifySignature(body, req.headers["x-line-signature"])) { res.writeHead(401); res.end("Invalid signature"); return; }
+      res.writeHead(200); res.end("OK");
+
+      let data;
+      try { data = JSON.parse(body); } catch { return; }
+      const events = data.events || [];
+      for (const event of events) {
+        (async () => {
+          try {
+            const sourceType = event.source?.type;
+            const isGroup    = sourceType === "group" || sourceType === "room";
+            const isUser     = sourceType === "user";
+
+            if (event.type === "follow")   { await handleFollow(event); return; }
+            if (event.type === "unfollow") { await handleUnfollow(event); return; }
+            if (event.type === "postback") { await handlePostback(event); return; }
+
+            if (event.type === "message") {
+              if (isGroup && event.message.type === "text") {
+                // กลุ่มแม่บ้าน: รับ reply เลขห้อง
+                await handleGroupReply(event.message.text || "");
+                return;
+              }
+              if (isUser && event.message.type === "text")  { await handleUserMessage(event); return; }
+              if (isUser && event.message.type === "image") { await handleImageMessage(event); return; }
+            }
+          } catch (err) { console.error("[Event Error]", err.message); }
+        })();
+      }
+    });
+  }).listen(PORT, () => console.log("Webhook port " + PORT));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STARTUP
+// ═══════════════════════════════════════════════════════════════
+console.log("Hotel + Apartment LINE Bot พร้อมทำงาน");
+ensureDir(DATA_DIR);
+
+const { syncEmails } = require("./email-sync");
+console.log("Email Sync พร้อมทำงาน (ทุก 30 นาที)");
+console.log("GOOGLE_SHEET_ID:", process.env.GOOGLE_SHEET_ID || "(ไม่พบ)");
+console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่พบ)");
+console.log("GOOGLE_SERVICE_ACCOUNT_JSON:", process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? `OK (${process.env.GOOGLE_SERVICE_ACCOUNT_JSON.length} chars)` : "(ไม่พบ)");
+
+startWebhookServer();
+
+// Hotel cron 19:00
+cron.schedule(CRON_SCHED, runHotelJob, { timezone: "Asia/Bangkok" });
+// Rent reminder เช็คทุกชั่วโมง
+cron.schedule("0 9 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });
+
+if (process.argv.includes("--test")) { console.log("โหมดทดสอบ..."); runHotelJob(); }
+if (process.argv.includes("--sync")) { console.log("sync email ทันที..."); syncEmails(); }
+
+// ─── Default rooms (apartment) ─────────────────────────────────
+function buildDefaultRooms() {
+  const data = [
+    {roomNumber:"101",tenantName:"สุณิสา จงจิตตาภิบาล",                    amount:4902, invoiceLink:"https://aprty.co/i/rQQAq58n8"},
+    {roomNumber:"102",tenantName:"เพลินพิศ โค้งอาภาส",                     amount:2761, invoiceLink:"https://aprty.co/i/V11kwAKGW"},
+    {roomNumber:"103",tenantName:"บริษัท เดอะ ลอฟท์ ลิฟวิ่ง สเปซ จำกัด",  amount:6312, invoiceLink:"https://aprty.co/i/eGGz9Qvxr"},
+    {roomNumber:"106",tenantName:"วีรภา ภู่ชำนาญ",                         amount:2599, invoiceLink:"https://aprty.co/i/pGG0BqYJ0"},
+    {roomNumber:"107",tenantName:"นันทิดา ชวนพิศ",                         amount:4525, invoiceLink:"https://aprty.co/i/nggmqLA9r"},
+    {roomNumber:"108",tenantName:"บริษัท เดอะ ลอฟท์ ลิฟวิ่ง สเปซ จำกัด",  amount:5853, invoiceLink:"https://aprty.co/i/9llLkr93M"},
+    {roomNumber:"110",tenantName:"สำฤทธิ์ อุตตะมะ",                        amount:2602, invoiceLink:"https://aprty.co/i/aGGMgAzan"},
+    {roomNumber:"111",tenantName:"วิชชุอร ภู่วงค์",                         amount:2200, invoiceLink:"https://aprty.co/i/k997qB6Ja"},
+    {roomNumber:"113",tenantName:"บริษัท เดอะ ลอฟท์ ลิฟวิ่ง สเปซ จำกัด",  amount:3980, invoiceLink:"https://aprty.co/i/Dee7Yr9g0"},
+    {roomNumber:"201",tenantName:"ธนัชพร บัวบาน",                          amount:2336, invoiceLink:"https://aprty.co/i/611Bqr9nD"},
+    {roomNumber:"202",tenantName:"รุ่งนภา วีระนรพานิช",                     amount:5233, invoiceLink:"https://aprty.co/i/wXXxyvQ7j"},
+    {roomNumber:"203",tenantName:"บริษัท เดอะ ลอฟท์ ลิฟวิ่ง สเปซ จำกัด",  amount:5832, invoiceLink:"https://aprty.co/i/NeeZqA936"},
+    {roomNumber:"204",tenantName:"บริษัท เดอะ ลอฟท์ ลิฟวิ่ง สเปซ จำกัด",  amount:5280, invoiceLink:"https://aprty.co/i/KeeANZ936"},
+    {roomNumber:"205",tenantName:"บริษัท เดอะ ลอฟท์ ลิฟวิ่ง สเปซ จำกัด",  amount:6080, invoiceLink:"https://aprty.co/i/1DDwQr9V4"},
+    {roomNumber:"206",tenantName:"บริษัท แอส บิลท์ เอ็นจิเนียริ่ง จำกัด", amount:3016, invoiceLink:"https://aprty.co/i/XBBwkAXpk"},
+    {roomNumber:"207",tenantName:"โสริยา วิสัยเกตุ",                        amount:1075, invoiceLink:"https://aprty.co/i/xBBjJ4GWq"},
+    {roomNumber:"212",tenantName:"ธาราทิพย์ บุตรดี",                        amount:2404, invoiceLink:"https://aprty.co/i/lVV3Ll09m"},
+    {roomNumber:"213",tenantName:"จิรภา คาขุนทด",                          amount:4132, invoiceLink:"https://aprty.co/i/lVV3Ll06Z"},
+    {roomNumber:"214",tenantName:"บริษัท เดอะ ลอฟท์ ลิฟวิ่ง สเปซ จำกัด",  amount:6235, invoiceLink:"https://aprty.co/i/LeedKA9Zj"},
+    {roomNumber:"300",tenantName:"บริษัท เดอะ ลอฟท์ ลิฟวิ่ง สเปซ จำกัด",  amount:8016, invoiceLink:"https://aprty.co/i/MeeY1A9mX"},
+    {roomNumber:"301",tenantName:"สุภัทราวลี สิทธิศร",                      amount:2068, invoiceLink:"https://aprty.co/i/Dee7Yr9gw"},
+    {roomNumber:"304",tenantName:"อนันท์ ยามดี",                            amount:2381, invoiceLink:"https://aprty.co/i/QDDj7A9pZ"},
+    {roomNumber:"305",tenantName:"ดวงเดือน ลาภทวี",                         amount:2310, invoiceLink:"https://aprty.co/i/wXXxyvQ7a"},
+    {roomNumber:"306",tenantName:"ฉันทพิชญา ใสใหม",                         amount:3898, invoiceLink:"https://aprty.co/i/NeeZqA93d"},
+    {roomNumber:"307",tenantName:"บัว เหลือบแล",                            amount:2598, invoiceLink:"https://aprty.co/i/KeeANZ93e"},
+    {roomNumber:"308",tenantName:"มุกธิดา อินทร์ไทยวงษ์",                   amount:5036, invoiceLink:"https://aprty.co/i/1DDwQr9Ve"},
+    {roomNumber:"309",tenantName:"สันทนา นรานอก",                           amount:2216, invoiceLink:"https://aprty.co/i/XBBwkAXpp"},
+    {roomNumber:"310",tenantName:"กองคำ นามปัญญา",                          amount:4074, invoiceLink:"https://aprty.co/i/Beev0r9Z3"},
+    {roomNumber:"311",tenantName:"บริษัท แอส บิลท์ เอ็นจิเนียริ่ง จำกัด", amount:5833, invoiceLink:"https://aprty.co/i/lVV3Ll09p"},
+    {roomNumber:"312",tenantName:"อิดดาเร๊ะ วาแม",                          amount:2256, invoiceLink:"https://aprty.co/i/zWWra3Kwo"},
+    {roomNumber:"314",tenantName:"บริษัท แอส บิลท์ เอ็นจิเนียริ่ง จำกัด", amount:3138, invoiceLink:"https://aprty.co/i/LeedKA9Zl"},
+    {roomNumber:"315",tenantName:"ฤกษ์มงคล เย็นใจ",                         amount:3346, invoiceLink:"https://aprty.co/i/MeeY1A9mn"},
+    {roomNumber:"316",tenantName:"กัญญาพร คล่องแคล่ว",                      amount:2100, invoiceLink:"https://aprty.co/i/qDDyBRZ7Y"},
+    {roomNumber:"402",tenantName:"พงศกร อาษานอก",                           amount:2312, invoiceLink:"https://aprty.co/i/RQQk7dD3m"},
+    {roomNumber:"403",tenantName:"บริษัท แอส บิลท์ เอ็นจิเนียริ่ง จำกัด", amount:3248, invoiceLink:"https://aprty.co/i/5KKX1V9n3"},
+    {roomNumber:"404",tenantName:"บริษัท แอส บิลท์ เอ็นจิเนียริ่ง จำกัด", amount:2232, invoiceLink:"https://aprty.co/i/zWWra3KD3"},
+    {roomNumber:"405",tenantName:"Nan Mue Noke",                            amount:3074, invoiceLink:"https://aprty.co/i/oGG6aMd3L"},
+    {roomNumber:"406",tenantName:"ชาญวุฒิ รุ่งฤทธิ์ดี",                     amount:5870, invoiceLink:"https://aprty.co/i/Geem8r93n"},
+    {roomNumber:"407",tenantName:"นาย จักรินทร์ เวียงลอ",                   amount:2320, invoiceLink:"https://aprty.co/i/dee5rDO76"},
+    {roomNumber:"408",tenantName:"ไชยยันห์ ดาโอภา",                         amount:2456, invoiceLink:"https://aprty.co/i/v118qODJW"},
+    {roomNumber:"409",tenantName:"สุจินต์ จงกรฏ",                           amount:3436, invoiceLink:"https://aprty.co/i/4NN1Kr9e4"},
+    {roomNumber:"410",tenantName:"เจนจิรา ปัดถาวโร",                        amount:3068, invoiceLink:"https://aprty.co/i/7XXljr9vO"},
+    {roomNumber:"411",tenantName:"นุสรา บุญจันทร์",                          amount:3916, invoiceLink:"https://aprty.co/i/3wwKNa980"},
+    {roomNumber:"412",tenantName:"บริษัท แอส บิลท์ เอ็นจิเนียริ่ง จำกัด", amount:2795, invoiceLink:"https://aprty.co/i/Jeeywr93x"},
+    {roomNumber:"413",tenantName:"สุทธินันท์ เวียงนนท์",                    amount:2258, invoiceLink:"https://aprty.co/i/rQQAq58KW"},
+    {roomNumber:"414",tenantName:"สถาพร โพธิ์แก้วเจริญพันธ์",              amount:2954, invoiceLink:"https://aprty.co/i/611Bqr9vD"},
+    {roomNumber:"415",tenantName:"เสงี่ยม แดงวิบูลย์",                      amount:2496, invoiceLink:"https://aprty.co/i/066QDr987"},
+    {roomNumber:"416",tenantName:"วีรศักดิ์ กองสุข",                         amount:2600, invoiceLink:"https://aprty.co/i/yllgJ7Nkg"},
+    {roomNumber:"506",tenantName:"ทองใส มโนธรรม",                            amount:2214, invoiceLink:"https://aprty.co/i/AeeOqr9YZ"},
+    {roomNumber:"507",tenantName:"ยลลดา โอสถศรี",                            amount:2054, invoiceLink:"https://aprty.co/i/k997qB7zR"},
+    {roomNumber:"509",tenantName:"วิมลรัตน์ ทองผุย",                         amount:3184, invoiceLink:"https://aprty.co/i/dee5rDOpR"},
+    {roomNumber:"512",tenantName:"บริษัท แอส บิลท์ เอ็นจิเนียริ่ง จำกัด", amount:2372, invoiceLink:"https://aprty.co/i/YllN1ABp8"},
+    {roomNumber:"513",tenantName:"เด็จฤดี มีชัย",                            amount:3028, invoiceLink:"https://aprty.co/i/ZWWKRAkpl"},
+    {roomNumber:"514",tenantName:"ลัศติพัจค์ บางปา",                         amount:1900, invoiceLink:"https://aprty.co/i/8BBW7ra4j"},
+    {roomNumber:"515",tenantName:"อมรวิทย์ วรรณทอง",                         amount:2700, invoiceLink:"https://aprty.co/i/xBBjJ4wRk"},
+  ];
+  const rooms = {};
+  data.forEach(d => { rooms[d.roomNumber] = { ...d, lineUserId: "" }; });
+  return rooms;
 }

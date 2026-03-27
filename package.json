@@ -1,19 +1,22 @@
 {
-  "name": "hotel-housekeeping-line-bot",
-  "version": "6.0.0",
-  "description": "ดึงอีเมล Little Hotelier อัปเดต Google Sheet + ส่งสรุปไปกลุ่มไลน์แม่บ้าน",
+  "name": "hotel-apartment-line-bot",
+  "version": "7.0.0",
+  "description": "Hotel housekeeping + Apartment rent notification LINE Bot",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "test": "node bot.js --test",
-    "sync": "node email-sync.js --sync"
+    "test":  "node bot.js --test",
+    "sync":  "node email-sync.js --sync"
   },
   "dependencies": {
-    "axios": "^1.7.2",
-    "dotenv": "^16.4.5",
-    "googleapis": "^140.0.0",
-    "imap": "^0.8.19",
-    "mailparser": "^3.7.1",
-    "node-cron": "^3.0.3"
+    "axios":       "^1.7.2",
+    "dotenv":      "^16.4.5",
+    "googleapis":  "^140.0.0",
+    "imap":        "^0.8.19",
+    "mailparser":  "^3.7.1",
+    "node-cron":   "^3.0.3",
+    "node-fetch":  "^2.7.0",
+    "multer":      "^1.4.5-lts.1",
+    "xlsx":        "^0.18.5"
   }
 }
