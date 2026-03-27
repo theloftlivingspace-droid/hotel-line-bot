@@ -98,12 +98,44 @@ async function addPendingRow(sheets, res) {
 // Parse อีเมล Little Hotelier
 // ─────────────────────────────────────────────
 function parseEmail(email) {
-  const text = email.text || "";
-  const resMatch = text.match(/[A-Z]{2,4}-[A-Z0-9]{8,}/);
-  const resId    = resMatch ? resMatch[0] : ("NOID-" + Date.now());
-  const pattern  = /(.+?)\s+booked\s+the\s+(.+?)\s+for\s+(.+?)\s+to\s+(.+?)\s+on\s+([^\n\r]+)/im;
-  const m        = text.match(pattern);
-  if (!m) return null;
+  const text = (email.text || "").replace(/\n/g, " ");
+
+  // หา Reservation ID
+  const resMatch = text.match(/[A-Z]{2,4}-[A-Z0-9]{6,}/);
+  const resId = resMatch ? resMatch[0] : ("NOID-" + Date.now());
+
+  // ดึงข้อมูลแบบ flexible
+  const match = text.match(/(.+?) booked the (.+?) for (.+?) to (.+?) on (.+?)(\.|$)/i);
+
+  if (!match) {
+    console.log("❌ parse ไม่ได้:", text.slice(0, 100));
+    return null;
+  }
+
+  const guest    = match[1].trim();
+  const roomName = match[2].trim();
+  const checkIn  = isoDate(match[3].trim());
+  const checkOut = isoDate(match[4].trim());
+  const channel  = match[5].trim();
+
+  if (!checkIn || !checkOut) {
+    console.log("❌ date parse ไม่ได้");
+    return null;
+  }
+
+  const isAirbnb = resId.startsWith("ABB-");
+
+  return {
+    resId,
+    guest,
+    roomName,
+    checkIn,
+    checkOut,
+    channel,
+    isAirbnb,
+    note: isAirbnb ? "" : "มัดจำ 3,000 บาท",
+  };
+}
 
   const checkIn  = isoDate(m[3].trim());
   const checkOut = isoDate(m[4].trim());
