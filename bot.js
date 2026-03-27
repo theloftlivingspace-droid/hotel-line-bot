@@ -18,7 +18,6 @@
  */
 
 require("dotenv").config();
-const http    = require("http");
 const crypto  = require("crypto");
 const fs      = require("fs");
 const path    = require("path");
@@ -484,7 +483,12 @@ async function handlePostback(event) {
       const r = myRooms[0];
       await lineReply(event.replyToken, [
         { type: "text", text: `📋 ข้อมูลค่าเช่าห้อง ${r.roomNumber} ค่ะ\n\nยอดค่าเช่าเดือนนี้: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` },
-        { type: "template", altText: "ดูใบแจ้งหนี้", template: { type: "buttons", text: `ใบแจ้งหนี้ห้อง ${r.roomNumber}`, actions: [{ type: "uri", label: "ดูใบแจ้งหนี้", uri: r.invoiceLink }] } },
+        { type: "flex", altText: `ใบแจ้งหนี้ห้อง ${r.roomNumber}`, contents: {
+          type: "bubble",
+          header: { type:"box", layout:"vertical", backgroundColor:"#0d9488", contents:[{type:"text", text:`ห้อง ${r.roomNumber}`, color:"#ffffff", weight:"bold", size:"md"}] },
+          body:   { type:"box", layout:"vertical", contents:[{type:"text", text:`ยอด: ${Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})} บาท`, size:"sm", color:"#333333"}] },
+          footer: { type:"box", layout:"vertical", contents:[{type:"button", style:"primary", color:"#0d9488", action:{type:"uri", label:"ดูใบแจ้งหนี้", uri: r.invoiceLink}}] },
+        }},
       ]);
     } else {
       const summary = myRooms.map(r => `🏠 ห้อง ${r.roomNumber}: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`).join("\n");
@@ -556,53 +560,239 @@ async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// WEBHOOK SERVER
+// EXPRESS SERVER + ADMIN API + WEBHOOK
 // ═══════════════════════════════════════════════════════════════
+const express = require("express");
+const multer  = require("multer");
+const XLSX    = require("xlsx");
+
+const app     = express();
+const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "apt2025@secret";
+const LOG_FILE    = path.join(DATA_DIR, "send-log.json");
+
 function verifySignature(rawBody, signature) {
   if (!LINE_SECRET) return true;
   const hash = crypto.createHmac("SHA256", LINE_SECRET).update(rawBody).digest("base64");
   return hash === signature;
 }
+function adminAuth(req, res, next) {
+  const token = req.headers["x-admin-token"] || req.query.token;
+  if (token !== ADMIN_TOKEN) return res.status(401).json({ error: "Unauthorized" });
+  next();
+}
+
+// ─── Bill History helpers ────────────────────────────────────────
+async function loadBillHistory() { return (await redisGet("bill_history")) || []; }
+async function saveBillHistory(h) { await redisSet("bill_history", h); }
+
+// ─── Webhook ─────────────────────────────────────────────────────
+app.post("/webhook", (req, res) => {
+  let body = "";
+  req.on("data", c => { body += c; });
+  req.on("end", () => {
+    if (!verifySignature(body, req.headers["x-line-signature"])) { res.status(401).send("Invalid signature"); return; }
+    res.status(200).send("OK");
+    let data; try { data = JSON.parse(body); } catch { return; }
+    for (const event of (data.events || [])) {
+      (async () => {
+        try {
+          const sourceType = event.source?.type;
+          const isGroup = sourceType === "group" || sourceType === "room";
+          const isUser  = sourceType === "user";
+          if (event.type === "follow")   { await handleFollow(event); return; }
+          if (event.type === "unfollow") { await handleUnfollow(event); return; }
+          if (event.type === "postback") { await handlePostback(event); return; }
+          if (event.type === "message") {
+            if (isGroup && event.message.type === "text")  { await handleGroupReply(event.message.text || ""); return; }
+            if (isUser  && event.message.type === "text")  { await handleUserMessage(event); return; }
+            if (isUser  && event.message.type === "image") { await handleImageMessage(event); return; }
+          }
+        } catch (err) { console.error("[Event Error]", err.message); }
+      })();
+    }
+  });
+});
+
+// ─── Static + Health ─────────────────────────────────────────────
+app.use(express.static(path.join(__dirname, "public")));
+app.use(express.json());
+app.get("/health", (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+
+// ─── Admin API ────────────────────────────────────────────────────
+app.get("/api/stats", adminAuth, async (req, res) => {
+  const rooms = Object.values(await loadRooms()), users = await loadUsers();
+  res.json({ totalRooms: rooms.length, registeredRooms: rooms.filter(r => r.lineUserId).length, totalFollowers: Object.keys(users).length, activeUsers: Object.values(users).filter(u => u.state === "REGISTERED").length });
+});
+app.get("/api/rooms", adminAuth, async (req, res) => { res.json(await loadRooms()); });
+app.get("/api/rooms.csv", adminAuth, async (req, res) => {
+  const rooms = await loadRooms();
+  const rows = ["roomNumber,tenantName,lineUserId,amount,invoiceLink", ...Object.values(rooms).map(r => `${r.roomNumber},"${r.tenantName}",${r.lineUserId},${r.amount},${r.invoiceLink}`)];
+  res.setHeader("Content-Type", "text/csv;charset=utf-8"); res.setHeader("Content-Disposition", 'attachment;filename="rooms.csv"'); res.send(rows.join("\n"));
+});
+app.get("/api/users", adminAuth, async (req, res) => { res.json(await loadUsers()); });
+app.patch("/api/rooms/:roomNumber", adminAuth, async (req, res) => {
+  const rooms = await loadRooms();
+  if (!rooms[req.params.roomNumber]) return res.status(404).json({ error: "Room not found" });
+  ["tenantName", "lineUserId", "amount", "invoiceLink"].forEach(k => { if (req.body[k] !== undefined) rooms[req.params.roomNumber][k] = req.body[k]; });
+  await saveRooms(rooms); res.json(rooms[req.params.roomNumber]);
+});
+app.delete("/api/rooms/:roomNumber/userId", adminAuth, async (req, res) => {
+  const rooms = await loadRooms();
+  if (!rooms[req.params.roomNumber]) return res.status(404).json({ error: "Room not found" });
+  const oldId = rooms[req.params.roomNumber].lineUserId; rooms[req.params.roomNumber].lineUserId = ""; await saveRooms(rooms);
+  if (oldId) { const users = await loadUsers(); if (users[oldId]) { users[oldId].state = "WAIT_FLOOR"; users[oldId].roomNumber = null; await saveUsers(users); } }
+  res.json({ ok: true });
+});
+app.get("/api/payments", adminAuth, async (req, res) => { res.json(await loadPayments()); });
+app.get("/api/slip-image/:id", adminAuth, async (req, res) => {
+  try {
+    let base64 = null;
+    const r = await fetch(`${REDIS_URL}/get/slip_img:${req.params.id}`, { headers: { Authorization: `Bearer ${REDIS_TOKEN}` } });
+    const data = await r.json(); if (data.result) base64 = data.result;
+    if (!base64) { const payments = await loadPayments(); const p = payments.find(p => p.id === req.params.id); if (p?.imageBase64) base64 = p.imageBase64; }
+    if (!base64) return res.status(404).send("ไม่พบรูปภาพ");
+    res.setHeader("Content-Type", "image/jpeg"); res.setHeader("Cache-Control", "public,max-age=86400");
+    res.send(Buffer.from(base64, "base64"));
+  } catch (e) { res.status(500).send(e.message); }
+});
+app.patch("/api/payments/:id", adminAuth, async (req, res) => {
+  const { status, note } = req.body; const payments = await loadPayments();
+  const idx = payments.findIndex(p => p.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "ไม่พบรายการ" });
+  payments[idx].status = status; payments[idx].note = note || ""; payments[idx].updatedAt = new Date().toISOString();
+  await savePayments(payments);
+  const p = payments[idx];
+  if (p.userId) {
+    const msg = status === "confirmed" ? `✅ ยืนยันการชำระเงินแล้วค่ะ\nห้อง ${p.roomNumber} ขอบคุณค่ะ` : `❌ สลิปถูกปฏิเสธค่ะ\n${note ? `เหตุผล: ${note}\n` : ""}กรุณาติดต่อเจ้าหน้าที่ค่ะ`;
+    linePush(p.userId, [{ type: "text", text: msg }]).catch(() => {});
+  }
+  res.json(payments[idx]);
+});
+app.post("/api/upload-invoice", adminAuth, upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "ไม่พบไฟล์ที่อัปโหลด" });
+  try {
+    const wb = XLSX.read(req.file.buffer, { type: "buffer" }), ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws);
+    if (!rows.length) return res.status(400).json({ error: "ไม่พบข้อมูลในไฟล์" });
+    const firstRow = rows[0];
+    if (!["ห้อง", "ลูกค้า", "ยอดรวม", "ลิงก์สาธารณะ"].every(k => k in firstRow)) return res.status(400).json({ error: "ไม่พบคอลัมน์ที่จำเป็น" });
+    const oldRooms = await loadRooms(), now = new Date();
+    const monthLabel = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const history = await loadBillHistory();
+    if (!history.find(h => h.month === monthLabel)) {
+      history.unshift({ month: monthLabel, archivedAt: now.toISOString(), rooms: Object.values(oldRooms).map(r => ({ roomNumber: r.roomNumber, tenantName: r.tenantName, amount: r.amount, invoiceLink: r.invoiceLink, lineUserId: r.lineUserId })) });
+      if (history.length > 24) history.pop(); await saveBillHistory(history);
+    }
+    const newRooms = {}; const skipped = [];
+    rows.filter(r => r["ลิงก์สาธารณะ"]?.includes("aprty.co/i/")).forEach(row => {
+      const roomNum = String(row["ห้อง"]).padStart(3, "0").replace(/^0+(\d{3,})$/, "$1");
+      if (!roomNum || roomNum === "undefined") { skipped.push(row); return; }
+      newRooms[roomNum] = { roomNumber: roomNum, tenantName: String(row["ลูกค้า"] || "").trim(), amount: Number(row["ยอดรวม"]) || 0, invoiceLink: String(row["ลิงก์สาธารณะ"]).trim(), lineUserId: oldRooms[roomNum]?.lineUserId || "" };
+    });
+    if (!Object.keys(newRooms).length) return res.status(400).json({ error: "ไม่พบข้อมูลห้องที่ถูกต้อง" });
+    await saveRooms(newRooms);
+    res.json({ ok: true, total: Object.keys(newRooms).length, archived: monthLabel, skipped: skipped.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/api/bill-history", adminAuth, async (req, res) => { res.json(await loadBillHistory()); });
+app.delete("/api/rooms/reset", adminAuth, async (req, res) => {
+  const oldRooms = await loadRooms(), freshRooms = buildDefaultRooms(), now = new Date();
+  const monthLabel = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const history = await loadBillHistory();
+  if (!history.find(h => h.month === monthLabel)) {
+    history.unshift({ month: monthLabel, archivedAt: now.toISOString(), rooms: Object.values(oldRooms).map(r => ({ roomNumber: r.roomNumber, tenantName: r.tenantName, amount: r.amount, invoiceLink: r.invoiceLink, lineUserId: r.lineUserId })) });
+    if (history.length > 24) history.pop(); await saveBillHistory(history);
+  }
+  Object.keys(freshRooms).forEach(num => { if (oldRooms[num]?.lineUserId) freshRooms[num].lineUserId = oldRooms[num].lineUserId; });
+  await saveRooms(freshRooms); res.json({ ok: true, total: Object.keys(freshRooms).length, archived: monthLabel });
+});
+app.post("/api/send-rent", adminAuth, async (req, res) => {
+  const rooms = await loadRooms(), allRooms = Object.values(rooms).filter(r => r.lineUserId);
+  const grouped = {}; allRooms.forEach(room => { if (!grouped[room.lineUserId]) grouped[room.lineUserId] = []; grouped[room.lineUserId].push(room); });
+  let ok = 0, fail = 0; const errors = [];
+  for (const [userId, userRooms] of Object.entries(grouped)) {
+    let messages;
+    if (userRooms.length === 1) {
+      const r = userRooms[0], amount = Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 });
+      messages = [{ type: "text", text: `คุณมีค่าเช่าห้อง ${r.roomNumber} เดือนนี้จำนวน ${amount} บาท ชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล ดูรายละเอียดกดลิงค์นี้ ${r.invoiceLink}` }];
+    } else {
+      const total = userRooms.reduce((s, r) => s + Number(r.amount), 0);
+      const summary = userRooms.map(r => `🏠 ห้อง ${r.roomNumber}: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`).join("\n");
+      const bubbles = userRooms.map(r => ({ type: "bubble", size: "kilo", header: { type: "box", layout: "vertical", backgroundColor: "#0d9488", contents: [{ type: "text", text: `ห้อง ${r.roomNumber}`, color: "#ffffff", weight: "bold", size: "md" }] }, body: { type: "box", layout: "vertical", contents: [{ type: "text", text: `ยอด: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`, size: "sm" }] }, footer: { type: "box", layout: "vertical", contents: [{ type: "button", style: "primary", color: "#0d9488", action: { type: "uri", label: "ดูใบแจ้งหนี้", uri: r.invoiceLink } }] } }));
+      messages = [{ type: "text", text: `คุณมีค่าเช่าเดือนนี้ดังนี้ค่ะ\n\n${summary}\n\nรวมทั้งหมด: ${total.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท\nชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล` }, { type: "flex", altText: "ใบแจ้งหนี้ทุกห้อง", contents: { type: "carousel", contents: bubbles } }];
+    }
+    try { await linePush(userId, messages); ok += userRooms.length; } catch (e) { fail += userRooms.length; userRooms.forEach(r => errors.push({ room: r.roomNumber, error: e.message })); }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  const skipped = Object.values(rooms).filter(r => !r.lineUserId).length;
+  const logs = loadJSON(LOG_FILE, []); logs.unshift({ date: new Date().toISOString(), ok, fail, skipped, errors }); saveJSON(LOG_FILE, logs.slice(0, 60));
+  res.json({ ok, fail, skipped, total: allRooms.length });
+});
+app.post("/api/send-rent-one/:roomNumber", adminAuth, async (req, res) => {
+  const rooms = await loadRooms(), room = rooms[req.params.roomNumber];
+  if (!room) return res.json({ ok: false, error: "ไม่พบห้อง" });
+  if (!room.lineUserId) return res.json({ ok: false, error: "ไม่มี LINE ID" });
+  const amount = Number(room.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 });
+  try { await linePush(room.lineUserId, [{ type: "text", text: `คุณมีค่าเช่าห้อง ${room.roomNumber} เดือนนี้จำนวน ${amount} บาท ชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล ดูรายละเอียดกดลิงค์นี้ ${room.invoiceLink}` }]); res.json({ ok: true }); }
+  catch (e) { res.json({ ok: false, error: e.message }); }
+});
+app.post("/api/broadcast", adminAuth, async (req, res) => {
+  const { message } = req.body; if (!message) return res.status(400).json({ error: "message required" });
+  const targets = Object.values(await loadRooms()).filter(r => r.lineUserId);
+  let ok = 0, fail = 0;
+  for (const room of targets) { try { await linePush(room.lineUserId, [{ type: "text", text: message }]); ok++; } catch { fail++; } await new Promise(r => setTimeout(r, 250)); }
+  res.json({ ok, fail, total: targets.length });
+});
+app.post("/api/collect-followers", adminAuth, async (req, res) => {
+  const rooms = await loadRooms(), REGISTER_MSG = req.body?.message || `สวัสดีค่ะ 👋\n\nทางอพาร์ทเมนท์ได้เปิดระบบแจ้งค่าเช่าผ่าน LINE แล้ว\nกรุณาเลือกชั้นและห้องของคุณด้านล่างเพื่อลงทะเบียนค่ะ`;
+  async function fetchAll() { const ids = []; let start; while (true) { const url = new URL("https://api.line.me/v2/bot/followers/ids"); if (start) url.searchParams.set("start", start); url.searchParams.set("limit", "1000"); const r = await fetch(url.toString(), { headers: { Authorization: `Bearer ${LINE_TOKEN}` } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); const d = await r.json(); ids.push(...(d.userIds || [])); if (!d.next) break; start = d.next; await new Promise(r => setTimeout(r, 200)); } return ids; }
+  try {
+    const allIds = await fetchAll(), users = await loadUsers();
+    const regIds = new Set(Object.values(rooms).map(r => r.lineUserId).filter(Boolean));
+    const need = allIds.filter(id => !regIds.has(id));
+    let sent = 0, fail = 0;
+    for (const userId of need) {
+      if (!users[userId]) { let displayName = "-"; try { const p = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, { headers: { Authorization: `Bearer ${LINE_TOKEN}` } }); if (p.ok) ({ displayName } = await p.json()); } catch {} users[userId] = { userId, displayName, state: "WAIT_FLOOR", roomNumber: null, pendingRoom: null, registeredAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; }
+      else { users[userId].state = "WAIT_FLOOR"; users[userId].pendingRoom = null; users[userId].updatedAt = new Date().toISOString(); }
+      try { await linePush(userId, [{ type: "text", text: REGISTER_MSG }, floorButtons(rooms)]); sent++; } catch { fail++; }
+      await new Promise(r => setTimeout(r, 250));
+    }
+    await saveUsers(users); res.json({ total: allIds.length, already: allIds.length - need.length, sent, failed: fail });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/api/set-richmenu-all", adminAuth, async (req, res) => {
+  const idFile = path.join(__dirname, "data", "richmenu-id.txt");
+  if (!fs.existsSync(idFile)) return res.status(400).json({ error: "ไม่พบ richmenu-id.txt" });
+  const richMenuId = fs.readFileSync(idFile, "utf8").trim(), rooms = await loadRooms();
+  const targets = Object.values(rooms).filter(r => r.lineUserId);
+  let ok = 0, fail = 0;
+  for (const room of targets) { try { await fetch(`https://api.line.me/v2/bot/user/${room.lineUserId}/richmenu/${richMenuId}`, { method: "POST", headers: { Authorization: `Bearer ${LINE_TOKEN}` } }); ok++; } catch { fail++; } await new Promise(r => setTimeout(r, 100)); }
+  res.json({ ok, fail, total: targets.length, richMenuId });
+});
+app.post("/api/test-reminder", adminAuth, async (req, res) => {
+  const day = Number(req.body.day) || new Date().getDate(), roomNumber = req.body.roomNumber || null;
+  try { await runRentReminder(day, roomNumber, true); res.json({ ok: true, day, roomNumber }); }
+  catch (e) { res.json({ ok: false, error: e.message }); }
+});
+app.get("/api/doc-requests",     adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "doc-requests.json"), [])); });
+app.get("/api/contact-logs",     adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "contact-logs.json"), [])); });
+app.get("/api/moveout-requests", adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "moveout-requests.json"), [])); });
+app.patch("/api/moveout-requests/:idx", adminAuth, async (req, res) => {
+  const idx = parseInt(req.params.idx), { status } = req.body;
+  const logs = loadJSON(path.join(DATA_DIR, "moveout-requests.json"), []);
+  if (!logs[idx]) return res.status(404).json({ error: "Not found" });
+  logs[idx].status = status; logs[idx].updatedAt = new Date().toISOString();
+  saveJSON(path.join(DATA_DIR, "moveout-requests.json"), logs);
+  if (status === "confirmed") {
+    const roomNum = logs[idx].roomNumber, rooms = await loadRooms();
+    if (rooms[roomNum]) { const oldUserId = rooms[roomNum].lineUserId; rooms[roomNum].lineUserId = ""; await saveRooms(rooms); if (oldUserId) { linePush(oldUserId, [{ type: "text", text: `✅ รับทราบการแจ้งย้ายออกห้อง ${roomNum} แล้วค่ะ\n\nเจ้าหน้าที่จะติดต่อเพื่อนัดตรวจสอบห้องและดำเนินการต่อไปค่ะ\n\nขอบคุณที่ใช้บริการนะคะ 😊` }]).catch(() => {}); } }
+  }
+  res.json({ ok: true });
+});
 
 function startWebhookServer() {
-  http.createServer((req, res) => {
-    if (req.method === "GET") { res.writeHead(200); res.end("Hotel + Apartment LINE Bot running"); return; }
-    if (req.method !== "POST" || req.url !== "/webhook") { res.writeHead(200); res.end("OK"); return; }
-
-    let body = "";
-    req.on("data", c => { body += c; });
-    req.on("end", () => {
-      if (!verifySignature(body, req.headers["x-line-signature"])) { res.writeHead(401); res.end("Invalid signature"); return; }
-      res.writeHead(200); res.end("OK");
-
-      let data;
-      try { data = JSON.parse(body); } catch { return; }
-      const events = data.events || [];
-      for (const event of events) {
-        (async () => {
-          try {
-            const sourceType = event.source?.type;
-            const isGroup    = sourceType === "group" || sourceType === "room";
-            const isUser     = sourceType === "user";
-
-            if (event.type === "follow")   { await handleFollow(event); return; }
-            if (event.type === "unfollow") { await handleUnfollow(event); return; }
-            if (event.type === "postback") { await handlePostback(event); return; }
-
-            if (event.type === "message") {
-              if (isGroup && event.message.type === "text") {
-                // กลุ่มแม่บ้าน: รับ reply เลขห้อง
-                await handleGroupReply(event.message.text || "");
-                return;
-              }
-              if (isUser && event.message.type === "text")  { await handleUserMessage(event); return; }
-              if (isUser && event.message.type === "image") { await handleImageMessage(event); return; }
-            }
-          } catch (err) { console.error("[Event Error]", err.message); }
-        })();
-      }
-    });
-  }).listen(PORT, () => console.log("Webhook port " + PORT));
+  app.listen(PORT, () => console.log("Webhook port " + PORT));
 }
 
 // ═══════════════════════════════════════════════════════════════
