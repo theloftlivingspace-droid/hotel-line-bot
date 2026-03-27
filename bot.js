@@ -457,12 +457,6 @@ async function handleImageMessage(event) {
       receivedAt: new Date().toISOString(),
     };
     const payments = await loadPayments(); payments.unshift(payment); await savePayments(payments.slice(0, 200));
-    // เก็บรูปแยกใน Redis key slip_img:{id} (TTL 90 วัน)
-    await fetch(`${REDIS_URL}/set/slip_img:${payment.id}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(["SET", `slip_img:${payment.id}`, base64, "EX", "7776000"])
-    });
 
     let replyText;
     if (!result.isSlip) replyText = `📸 ได้รับรูปภาพแล้วค่ะ\n\n🏠 ห้อง: ${roomList}\n\nเจ้าหน้าที่รับเรื่องแล้วและจะติดต่อกลับโดยเร็วที่สุดค่ะ 😊`;
@@ -485,22 +479,42 @@ async function handlePostback(event) {
   if (data === "action=CHECK_RENT") {
     const myRooms = Object.values(rooms).filter(r => r.lineUserId === userId);
     if (!myRooms.length) { await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนนะคะ" }]); return; }
-    if (myRooms.length === 1) {
-      const r = myRooms[0];
-      await lineReply(event.replyToken, [
-        { type: "text", text: `📋 ข้อมูลค่าเช่าห้อง ${r.roomNumber} ค่ะ\n\nยอดค่าเช่าเดือนนี้: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` },
-        { type: "flex", altText: `ใบแจ้งหนี้ห้อง ${r.roomNumber}`, contents: {
-          type: "bubble",
-          header: { type:"box", layout:"vertical", backgroundColor:"#0d9488", contents:[{type:"text", text:`ห้อง ${r.roomNumber}`, color:"#ffffff", weight:"bold", size:"md"}] },
-          body:   { type:"box", layout:"vertical", contents:[{type:"text", text:`ยอด: ${Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})} บาท`, size:"sm", color:"#333333"}] },
-          footer: { type:"box", layout:"vertical", contents:[{type:"button", style:"primary", color:"#0d9488", action:{type:"uri", label:"ดูใบแจ้งหนี้", uri: r.invoiceLink}}] },
-        }},
-      ]);
-    } else {
-      const summary = myRooms.map(r => `🏠 ห้อง ${r.roomNumber}: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`).join("\n");
-      const total = myRooms.reduce((s, r) => s + Number(r.amount), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 });
-      await lineReply(event.replyToken, [{ type: "text", text: `📋 ข้อมูลค่าเช่าทุกห้องของคุณค่ะ\n\n${summary}\n\nรวมทั้งหมด: ${total} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` }]);
+    const total = myRooms.reduce((s, r) => s + Number(r.amount), 0);
+    const bubbles = myRooms.map(r => {
+      const amount = Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 });
+      const footerContents = r.invoiceLink
+        ? [{ type: "button", style: "primary", color: "#0d9488", action: { type: "uri", label: "ดูใบแจ้งหนี้", uri: r.invoiceLink } }]
+        : [{ type: "button", style: "primary", color: "#0d9488", action: { type: "postback", label: "ส่งสลิปชำระเงิน", data: "action=SEND_SLIP" } }];
+      return {
+        type: "bubble", size: "kilo",
+        header: { type: "box", layout: "vertical", backgroundColor: "#0d9488", paddingAll: "16px", contents: [
+          { type: "text", text: `🏠 ห้อง ${r.roomNumber}`, color: "#ffffff", weight: "bold", size: "lg" },
+        ]},
+        body: { type: "box", layout: "vertical", spacing: "sm", paddingAll: "16px", contents: [
+          { type: "box", layout: "horizontal", contents: [
+            { type: "text", text: "ค่าเช่าเดือนนี้", size: "sm", color: "#888888", flex: 2 },
+            { type: "text", text: `${amount} บาท`, size: "sm", color: "#111111", weight: "bold", flex: 3, align: "end" },
+          ]},
+          { type: "box", layout: "horizontal", contents: [
+            { type: "text", text: "กำหนดชำระ", size: "sm", color: "#888888", flex: 2 },
+            { type: "text", text: "วันที่ 7 ของทุกเดือน", size: "sm", color: "#111111", flex: 3, align: "end" },
+          ]},
+          { type: "separator", margin: "md" },
+          { type: "box", layout: "horizontal", margin: "md", contents: [
+            { type: "text", text: "ผู้เช่า", size: "sm", color: "#888888", flex: 2 },
+            { type: "text", text: r.tenantName || "-", size: "sm", color: "#111111", flex: 3, align: "end" },
+          ]},
+        ]},
+        footer: { type: "box", layout: "vertical", paddingAll: "12px", contents: footerContents },
+      };
+    });
+    const messages = [];
+    if (myRooms.length > 1) {
+      const totalStr = total.toLocaleString("th-TH", { minimumFractionDigits: 2 });
+      messages.push({ type: "text", text: `📋 ค่าเช่าของคุณเดือนนี้ค่ะ\n\nรวมทั้งหมด: ${totalStr} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` });
     }
+    messages.push({ type: "flex", altText: "ใบแจ้งหนี้ค่าเช่า", contents: bubbles.length === 1 ? bubbles[0] : { type: "carousel", contents: bubbles } });
+    await lineReply(event.replyToken, messages);
     return;
   }
   if (data === "action=SEND_SLIP") {
