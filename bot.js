@@ -650,6 +650,8 @@ app.post("/webhook", (req, res) => {
           if (event.type === "unfollow") { await handleUnfollow(event); return; }
           if (event.type === "postback") { await handlePostback(event); return; }
           if (event.type === "message") {
+            const uid = event.source?.userId || "";
+            console.log(`[Webhook] type=${event.type} source=${event.source?.type} userId=${uid}`);
             if (isUser && event.message.type === "text") {
               // ถ้าเป็นแอดมิน reply เลขห้อง → จัดการ hotel
               await handleAdminReply(event.message.text || "", event.source.userId);
