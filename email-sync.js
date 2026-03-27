@@ -1,7 +1,7 @@
 /**
- * Email Sync v2
- * - ตรวจอีเมลจอง Little Hotelier ทุก 30 นาที → แจ้ง LINE
- * - รับ reply เลขห้องจาก LINE → อัปเดต Google Sheet ทันที
+ * Email Sync v3
+ * - รองรับทั้ง text และ HTML email
+ * - เพิ่ม debug log เพื่อวินิจฉัยปัญหา
  */
 
 require("dotenv").config();
@@ -50,9 +50,7 @@ async function appendEmailLog(sheets, resId, guest, roomName, checkIn, checkOut,
   });
 }
 
-// อัปเดตเลขห้องใน Sheet หลัก
 async function updateRoomInSheet(sheets, resId, roomNumber) {
-  // หา row ที่มี resId ใน column E
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range: SHEET_NAME + "!A:E",
@@ -61,7 +59,6 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
 
   for (let i = 1; i < rows.length; i++) {
     if ((rows[i][4] || "").trim() === resId) {
-      // อัปเดต column A (เลขห้อง)
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
         range: SHEET_NAME + "!A" + (i + 1),
@@ -71,10 +68,9 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
       return true;
     }
   }
-  return false; // ไม่พบ row
+  return false;
 }
 
-// เพิ่มแถวใหม่ใน Sheet หลัก (พร้อมชื่อห้อง รอเลขห้อง)
 async function addPendingRow(sheets, res) {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
@@ -83,31 +79,70 @@ async function addPendingRow(sheets, res) {
     insertDataOption: "INSERT_ROWS",
     requestBody: {
       values: [[
-        "รอยืนยัน",   // A: เลขห้อง (รอ admin ตอบ)
-        res.guest,    // B: ชื่อแขก
-        res.checkIn,  // C: เช็คอิน
-        res.checkOut, // D: เช็คเอาท์
-        res.resId,    // E: ช่องทาง/รหัสจอง
-        res.note,     // F: โน้ต
+        "รอยืนยัน",
+        res.guest,
+        res.checkIn,
+        res.checkOut,
+        res.resId,
+        res.note,
       ]],
     },
   });
 }
 
 // ─────────────────────────────────────────────
-// Parse อีเมล Little Hotelier
+// Parse อีเมล — รองรับ text และ HTML
 // ─────────────────────────────────────────────
+function extractTextFromEmail(email) {
+  // ลอง text ก่อน ถ้าไม่มีค่อยดึงจาก HTML
+  if (email.text && email.text.trim().length > 10) {
+    return email.text;
+  }
+  if (email.html) {
+    // ลบ HTML tags ออก
+    return email.html
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  return "";
+}
+
 function parseEmail(email) {
-  const text = email.text || "";
-  const resMatch = text.match(/[A-Z]{2,4}-[A-Z0-9]{8,}/);
+  const rawText = extractTextFromEmail(email);
+
+  // DEBUG: แสดง 300 ตัวอักษรแรกของ email content
+  console.log("DEBUG email content:", rawText.substring(0, 300));
+  console.log("DEBUG subject:", email.subject || "(no subject)");
+
+  if (!rawText || rawText.length < 10) {
+    console.log("DEBUG: email body ว่างเปล่า");
+    return null;
+  }
+
+  const resMatch = rawText.match(/[A-Z]{2,4}-[A-Z0-9]{8,}/);
   const resId    = resMatch ? resMatch[0] : ("NOID-" + Date.now());
-  const pattern  = /(.+?)\s+booked\s+the\s+(.+?)\s+for\s+(.+?)\s+to\s+(.+?)\s+on\s+([^\n\r]+)/im;
-  const m        = text.match(pattern);
-  if (!m) return null;
+  console.log("DEBUG resId:", resId);
+
+  const pattern = /(.+?)\s+booked\s+the\s+(.+?)\s+for\s+(.+?)\s+to\s+(.+?)\s+on\s+([^\n\r.]+)/im;
+  const m       = rawText.match(pattern);
+
+  if (!m) {
+    console.log("DEBUG: pattern ไม่ match — raw text ช่วงสำคัญ:", rawText.substring(0, 500));
+    return null;
+  }
+
+  console.log("DEBUG match:", m[1], "|", m[2], "|", m[3], "|", m[4], "|", m[5]);
 
   const checkIn  = isoDate(m[3].trim());
   const checkOut = isoDate(m[4].trim());
-  if (!checkIn || !checkOut) return null;
+  if (!checkIn || !checkOut) {
+    console.log("DEBUG: แปลงวันที่ไม่ได้ —", m[3], "→", checkIn, "|", m[4], "→", checkOut);
+    return null;
+  }
 
   const isAirbnb = resId.startsWith("ABB-");
   return {
@@ -143,19 +178,19 @@ function thaiDate(iso) {
 }
 
 // ─────────────────────────────────────────────
-// ส่ง LINE แจ้งจองใหม่ (พร้อม keyword สำหรับ reply)
+// ส่ง LINE
 // ─────────────────────────────────────────────
 async function sendNewBookingAlert(res) {
   const depositLine = res.isAirbnb ? "" : "\n💰 เก็บมัดจำ 3,000 บาท";
   const msg =
     "\n🔔 จองใหม่! กรุณาระบุเลขห้อง\n" +
-    "─────────────────────────\n" +
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n" +
     "👤 " + res.guest + "\n" +
     "🛏 " + res.roomName + "\n" +
     "📅 " + thaiDate(res.checkIn) + " → " + thaiDate(res.checkOut) + "\n" +
     "📌 " + res.resId +
     depositLine + "\n" +
-    "─────────────────────────\n" +
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n" +
     "👇 ตอบกลับแค่ตัวเลข เช่น  203";
 
   await axios.post(
@@ -177,16 +212,12 @@ async function sendConfirmation(resId, roomNumber, guest) {
 
 // ─────────────────────────────────────────────
 // รับ Reply จาก LINE webhook
-// รูปแบบ: #ABB-XXXXXXXX 203
 // ─────────────────────────────────────────────
 async function handleLineReply(messageText) {
-  // รับแค่ตัวเลขห้อง เช่น "203" หรือ "ห้อง 203"
   const match = messageText.trim().match(/^(?:ห้อง\s*)?(\d{2,3}\w*)$/);
   if (!match) return;
 
   const roomNumber = match[1];
-
-  // หาการจองล่าสุดที่ยัง "รอยืนยัน" ใน Sheet
   const sheets = getSheets();
   const res2 = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
@@ -196,7 +227,6 @@ async function handleLineReply(messageText) {
 
   let pendingRowIndex = -1;
   let resId = "";
-  // หาแถวล่าสุดที่เลขห้องเป็น "รอยืนยัน"
   for (let i = rows.length - 1; i >= 1; i--) {
     if ((rows[i][0] || "").trim() === "รอยืนยัน") {
       pendingRowIndex = i;
@@ -245,14 +275,21 @@ function fetchEmails(since) {
           ["FROM", "no-reply@app.littlehotelier.com"],
           ["SUBJECT", "New Reservation"],
         ], (err, uids) => {
-          if (err || !uids || uids.length === 0) { imap.end(); return resolve([]); }
+          if (err || !uids || uids.length === 0) {
+            console.log("ไม่พบอีเมลใหม่");
+            imap.end();
+            return resolve([]);
+          }
           console.log("พบอีเมล: " + uids.length + " ฉบับ");
           const fetch = imap.fetch(uids, { bodies: "" });
           const tasks = [];
           fetch.on("message", (msg) => {
             const p = new Promise((res) => {
               msg.on("body", (stream) => {
-                simpleParser(stream, (err, parsed) => { if (!err) emails.push(parsed); res(); });
+                simpleParser(stream, (err, parsed) => {
+                  if (!err) emails.push(parsed);
+                  res();
+                });
               });
             });
             tasks.push(p);
@@ -276,21 +313,26 @@ async function syncEmails() {
     const sheets = getSheets();
     const log    = await getEmailLog(sheets);
     const notifiedIds = new Set(log.map((r) => r[0]));
+    console.log("email_log มี " + notifiedIds.size + " รายการ");
 
     const since = new Date();
     since.setDate(since.getDate() - 3);
     const emails = await fetchEmails(since);
+    console.log("parse อีเมลทั้งหมด " + emails.length + " ฉบับ");
 
     for (const email of emails) {
       const res = parseEmail(email);
-      if (!res) continue;
-      if (notifiedIds.has(res.resId)) { console.log("แจ้งไปแล้ว: " + res.resId); continue; }
+      if (!res) {
+        console.log("parse ไม่ได้ — ข้ามไป");
+        continue;
+      }
+      if (notifiedIds.has(res.resId)) {
+        console.log("แจ้งไปแล้ว: " + res.resId);
+        continue;
+      }
 
-      // เพิ่ม row ใน Sheet หลักพร้อม "รอยืนยัน"
       await addPendingRow(sheets, res);
-      // บันทึก log
       await appendEmailLog(sheets, res.resId, res.guest, res.roomName, res.checkIn, res.checkOut, res.isAirbnb);
-      // แจ้ง LINE
       await sendNewBookingAlert(res);
     }
     console.log("ตรวจเสร็จ");
@@ -299,12 +341,8 @@ async function syncEmails() {
   }
 }
 
-// ─────────────────────────────────────────────
-// EXPORTS (ใช้ใน bot.js webhook handler)
-// ─────────────────────────────────────────────
 module.exports = { syncEmails, handleLineReply };
 
-// SCHEDULER
 console.log("Email Sync พร้อมทำงาน (ทุก 30 นาที)");
 cron.schedule("*/30 * * * *", syncEmails, { timezone: "Asia/Bangkok" });
 if (process.argv.includes("--sync")) { console.log("sync ทันที..."); syncEmails(); }
