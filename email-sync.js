@@ -16,6 +16,7 @@ const GMAIL_USER  = process.env.GMAIL_USER;
 const GMAIL_PASS  = process.env.GMAIL_APP_PASSWORD;
 const LINE_TOKEN  = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const LINE_GROUP  = process.env.LINE_GROUP_ID;
+const ADMIN_USER  = process.env.ADMIN_USER_ID || LINE_GROUP; // ส่งหาแอดมินส่วนตัว
 const SHEET_ID    = process.env.GOOGLE_SHEET_ID;
 const SHEET_NAME  = process.env.GOOGLE_SHEET_NAME || "Sheet1";
 
@@ -182,7 +183,7 @@ async function sendNewBookingAlert(res) {
 
   await axios.post(
     "https://api.line.me/v2/bot/message/push",
-    { to: LINE_GROUP, messages: [{ type: "text", text: msg }] },
+    { to: ADMIN_USER, messages: [{ type: "text", text: msg }] },
     { headers: { Authorization: "Bearer " + LINE_TOKEN, "Content-Type": "application/json" } }
   );
   console.log("แจ้ง LINE: " + res.resId);
@@ -192,7 +193,7 @@ async function sendConfirmation(resId, roomNumber, guest) {
   const msg = "\u2705 อัปเดตแล้ว!\n" + guest + "\nห้อง " + roomNumber + " (" + resId + ")";
   await axios.post(
     "https://api.line.me/v2/bot/message/push",
-    { to: LINE_GROUP, messages: [{ type: "text", text: msg }] },
+    { to: ADMIN_USER, messages: [{ type: "text", text: msg }] },
     { headers: { Authorization: "Bearer " + LINE_TOKEN, "Content-Type": "application/json" } }
   );
 }

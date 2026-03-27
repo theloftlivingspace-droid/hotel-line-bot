@@ -28,7 +28,8 @@ const { google } = require("googleapis");
 // ─── ENV ────────────────────────────────────────────────────────
 const LINE_TOKEN    = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
 const LINE_SECRET   = process.env.LINE_CHANNEL_SECRET       || "";
-const LINE_GROUP    = process.env.LINE_GROUP_ID             || "";   // กลุ่มแม่บ้าน
+const LINE_GROUP    = process.env.LINE_GROUP_ID             || "";   // กลุ่มแม่บ้าน (ยังใช้สำหรับสรุปประจำวัน)
+const ADMIN_USER    = process.env.ADMIN_USER_ID             || "";   // LINE User ID แอดมิน (รับแจ้งจองใหม่)
 const SHEET_ID      = process.env.GOOGLE_SHEET_ID           || "";
 const SHEET_NAME    = process.env.GOOGLE_SHEET_NAME         || "Sheet1";
 const CRON_SCHED    = process.env.CRON_SCHEDULE             || "0 19 * * *";
@@ -227,7 +228,7 @@ async function runHotelJob() {
 
 // ─── Hotel: reply เลขห้องจากกลุ่ม ──────────────────────────────
 async function updateRoomInSheet(sheets, resId, roomNumber) {
-  const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:E" });
+  const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:F" });
   const rows = result.data.values || [];
   for (let i = 1; i < rows.length; i++) {
     if ((rows[i][4] || "").trim() === resId) {
@@ -235,13 +236,14 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
         spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A" + (i + 1),
         valueInputOption: "RAW", requestBody: { values: [[roomNumber]] },
       });
-      return rows[i][1] || resId;
+      return { guest: rows[i][1] || resId, row: rows[i] };
     }
   }
-  return null;
+  return { guest: null, row: null };
 }
-async function handleGroupReply(text) {
-  // รูปแบบ: ตอบกลับแค่ตัวเลข
+async function handleAdminReply(text, userId) {
+  // รับเฉพาะจากแอดมิน
+  if (ADMIN_USER && userId !== ADMIN_USER) return;
   const match = text.trim().match(/^(?:ห้อง\s*)?(\d{2,3}\w*)$/);
   if (!match) return;
   const roomNumber = match[1];
@@ -254,12 +256,34 @@ async function handleGroupReply(text) {
   }
   if (!resId) { console.log("ไม่มีการจองที่รอยืนยัน"); return; }
   try {
-    const guest = await updateRoomInSheet(sheets, resId, roomNumber);
+    const { guest, row } = await updateRoomInSheet(sheets, resId, roomNumber);
     if (guest) {
-      const msg = "✅ อัปเดตแล้ว!\n" + guest + "\nห้อง " + roomNumber + " (" + resId + ")";
-      await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+      // ยืนยันกลับหาแอดมิน
+      const confirmMsg = "✅ อัปเดตแล้ว!\n" + guest + "\nห้อง " + roomNumber + " (" + resId + ")";
+      await linePush(ADMIN_USER || userId, [{ type: "text", text: confirmMsg }]);
+
+      // ส่งกลุ่มแม่บ้านเฉพาะเมื่อเช็คอินวันนี้
+      if (LINE_GROUP && row) {
+        const checkIn  = normalizeDate(row[2] || "");
+        const checkOut = normalizeDate(row[3] || "");
+        const channel  = row[4] || "";
+        const note     = row[5] || "";
+        const today    = new Date().toISOString().slice(0, 10);
+        if (checkIn === today) {
+          const isAirbnb = /ABB-|airbnb/i.test(channel);
+          const depositLine = (!isAirbnb) ? "\n💰 เก็บมัดจำ 3,000 บาท" : "";
+          const sep = "─────────────────────────";
+          const groupMsg =
+            "\n🔔 เช็คอินวันนี้ (จองใหม่)\n" + sep + "\n" +
+            `🔑 ห้อง ${roomNumber}  —  ${guest}\n` +
+            `📅 ${formatThaiDate(checkIn)} → ${formatThaiDate(checkOut)}\n` +
+            `📌 ${channel}` + depositLine + "\n" + sep;
+          await linePush(LINE_GROUP, [{ type: "text", text: groupMsg }]);
+          console.log(`[Hotel] แจ้งกลุ่มแม่บ้าน เช็คอินวันนี้ ห้อง ${roomNumber}`);
+        }
+      }
     }
-  } catch (err) { console.error("group reply error: " + err.message); }
+  } catch (err) { console.error("admin reply error: " + err.message); }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -626,8 +650,13 @@ app.post("/webhook", (req, res) => {
           if (event.type === "unfollow") { await handleUnfollow(event); return; }
           if (event.type === "postback") { await handlePostback(event); return; }
           if (event.type === "message") {
-            if (isGroup && event.message.type === "text")  { await handleGroupReply(event.message.text || ""); return; }
-            if (isUser  && event.message.type === "text")  { await handleUserMessage(event); return; }
+            if (isUser && event.message.type === "text") {
+              // ถ้าเป็นแอดมิน reply เลขห้อง → จัดการ hotel
+              await handleAdminReply(event.message.text || "", event.source.userId);
+              // ทุก user message ส่งไป apartment handler ด้วยเสมอ
+              await handleUserMessage(event);
+              return;
+            }
             if (isUser  && event.message.type === "image") { await handleImageMessage(event); return; }
           }
         } catch (err) { console.error("[Event Error]", err.message); }
