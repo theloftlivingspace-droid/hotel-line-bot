@@ -506,7 +506,16 @@ async function handlePostback(event) {
     } else {
       const summary = myRooms.map(r => `🏠 ห้อง ${r.roomNumber}: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`).join("\n");
       const total = myRooms.reduce((s, r) => s + Number(r.amount), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 });
-      await lineReply(event.replyToken, [{ type: "text", text: `📋 ข้อมูลค่าเช่าทุกห้องของคุณค่ะ\n\n${summary}\n\nรวมทั้งหมด: ${total} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` }]);
+      const billBubbles = myRooms.map(r => ({
+        type: "bubble", size: "kilo",
+        header: { type: "box", layout: "vertical", backgroundColor: "#0d9488", contents: [{ type: "text", text: `ห้อง ${r.roomNumber}`, color: "#ffffff", weight: "bold", size: "md" }] },
+        body:   { type: "box", layout: "vertical", contents: [{ type: "text", text: `ยอด: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`, size: "sm", color: "#333333" }] },
+        footer: { type: "box", layout: "vertical", contents: [{ type: "button", style: "primary", color: "#0d9488", action: { type: "uri", label: "ดูใบแจ้งหนี้", uri: r.invoiceLink } }] },
+      }));
+      await lineReply(event.replyToken, [
+        { type: "text", text: `📋 ข้อมูลค่าเช่าทุกห้องของคุณค่ะ\n\n${summary}\n\nรวมทั้งหมด: ${total} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` },
+        { type: "flex", altText: "ใบแจ้งหนี้ทุกห้อง", contents: { type: "carousel", contents: billBubbles } },
+      ]);
     }
     return;
   }
