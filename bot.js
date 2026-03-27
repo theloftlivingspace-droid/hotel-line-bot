@@ -123,6 +123,20 @@ async function savePayments(p) {
   const meta = p.map(({ imageBase64, ...rest }) => rest);
   await redisSet("payments", meta);
   saveJSON(PAYMENTS_FILE, p);
+  // save รูปแยก key ใน Redis ผ่าน pipeline
+  for (const pay of p) {
+    if (pay.imageBase64 && REDIS_URL) {
+      try {
+        await fetch(`${REDIS_URL}/pipeline`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${REDIS_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify([
+            ["SET", `slip_img:${pay.id}`, pay.imageBase64, "EX", 5184000]
+          ]),
+        });
+      } catch (e) { console.error("[Redis slip img save]", e.message); }
+    }
+  }
 }
 
 // ─── Google Sheets (hotel) ──────────────────────────────────────
@@ -447,20 +461,11 @@ async function handleImageMessage(event) {
     const base64 = await downloadLineImage(event.message.id);
     const paymentId = Date.now().toString();
 
-    // save รูปลง Redis แยก key เสมอ (TTL 60 วัน)
-    if (REDIS_URL) {
-      try {
-        await fetch(`${REDIS_URL}/set`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${REDIS_TOKEN}`, "Content-Type": "application/json" },
-          body: JSON.stringify([`slip_img:${paymentId}`, base64, "EX", 5184000]),
-        });
-      } catch (e) { console.error("[Redis slip save error]", e.message); }
-    }
-
+    // save รูปใน payment record โดยตรง (Redis จะเก็บแยก key โดย savePayments)
     const payment = {
       id: paymentId, roomNumber: roomList, tenantName: rooms[user.roomNumber]?.tenantName,
       userId, messageId: event.message.id,
+      imageBase64: base64,
       slipAmount: null, expectedAmount: totalAmount, amountMatch: false,
       isSlip: true, bankName: null, date: null,
       status: "pending_review",
