@@ -210,7 +210,6 @@ console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่�
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON:", process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? "OK ("+process.env.GOOGLE_SERVICE_ACCOUNT_JSON.length+" chars)" : "(ไม่พบ)");
 startWebhookServer();
 cron.schedule(CRON_SCHED, runJob, { timezone: "Asia/Bangkok" });
-runJob(); // 
 if (process.argv.includes("--test")) { console.log("โหมดทดสอบ..."); runJob(); }
 
 // ─────────────────────────────────────────────
