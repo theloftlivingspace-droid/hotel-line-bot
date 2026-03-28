@@ -122,8 +122,11 @@ function parseEmail(email) {
   const subject = email.subject || "";
   if (!body || body.length < 20) return null;
 
+  // ตัด prefix "New Reservation XX New Reservation" ออกก่อน match
+  const cleanBody = body.replace(/New\s+Reservation\s+\d+\s+New\s+Reservation\s+/gi, "");
+
   // รูปแบบ: "NAME booked the ROOM for DATE to DATE on CHANNEL"
-  const m = body.match(
+  const m = cleanBody.match(
     /(.+?)\s+booked\s+the\s+(.+?)\s+for\s+(.+?)\s+to\s+(.+?)\s+on\s+([^\n\r]+)/im
   );
   if (!m) return null;
