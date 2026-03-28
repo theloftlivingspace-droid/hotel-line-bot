@@ -654,9 +654,12 @@ app.post("/webhook", (req, res) => {
             const uid = event.source?.userId || "";
             console.log(`[Webhook] type=${event.type} source=${event.source?.type} userId=${uid}`);
             if (isUser && event.message.type === "text") {
-              // ถ้าเป็นแอดมิน reply เลขห้อง → จัดการ hotel ถ้าจัดการแล้วหยุด
-              const handled = await handleAdminReply(event.message.text || "", event.source.userId);
-              if (!handled) await handleUserMessage(event);
+              // ถ้าเป็นแอดมิน → จัดการ hotel เท่านั้น ไม่ส่งไป apartment
+              if (ADMIN_USER && event.source.userId === ADMIN_USER) {
+                await handleAdminReply(event.message.text || "", event.source.userId);
+                return;
+              }
+              await handleUserMessage(event);
               return;
             }
             if (isUser  && event.message.type === "image") { await handleImageMessage(event); return; }
