@@ -243,9 +243,9 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
 }
 async function handleAdminReply(text, userId) {
   // รับเฉพาะจากแอดมิน
-  if (ADMIN_USER && userId !== ADMIN_USER) return;
+  if (ADMIN_USER && userId !== ADMIN_USER) return false;
   const match = text.trim().match(/^(?:ห้อง\s*)?(\d{2,3}\w*)$/);
-  if (!match) return;
+  if (!match) return false;
   const roomNumber = match[1];
   const sheets = getSheets();
   const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:E" });
@@ -254,7 +254,7 @@ async function handleAdminReply(text, userId) {
   for (let i = rows.length - 1; i >= 1; i--) {
     if ((rows[i][0] || "").trim() === "รอยืนยัน") { resId = (rows[i][4] || "").trim(); break; }
   }
-  if (!resId) { console.log("ไม่มีการจองที่รอยืนยัน"); return; }
+  if (!resId) { console.log("ไม่มีการจองที่รอยืนยัน"); return false; }
   try {
     const { guest, row } = await updateRoomInSheet(sheets, resId, roomNumber);
     if (guest) {
@@ -283,7 +283,8 @@ async function handleAdminReply(text, userId) {
         }
       }
     }
-  } catch (err) { console.error("admin reply error: " + err.message); }
+  } catch (err) { console.error("admin reply error: " + err.message); return false; }
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -653,10 +654,9 @@ app.post("/webhook", (req, res) => {
             const uid = event.source?.userId || "";
             console.log(`[Webhook] type=${event.type} source=${event.source?.type} userId=${uid}`);
             if (isUser && event.message.type === "text") {
-              // ถ้าเป็นแอดมิน reply เลขห้อง → จัดการ hotel
-              await handleAdminReply(event.message.text || "", event.source.userId);
-              // ทุก user message ส่งไป apartment handler ด้วยเสมอ
-              await handleUserMessage(event);
+              // ถ้าเป็นแอดมิน reply เลขห้อง → จัดการ hotel ถ้าจัดการแล้วหยุด
+              const handled = await handleAdminReply(event.message.text || "", event.source.userId);
+              if (!handled) await handleUserMessage(event);
               return;
             }
             if (isUser  && event.message.type === "image") { await handleImageMessage(event); return; }
@@ -670,7 +670,6 @@ app.post("/webhook", (req, res) => {
 // ─── Static + Health ─────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
-app.get("/", (req, res) => res.status(200).send("OK"));
 app.get("/health", (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
 // ─── Admin API ────────────────────────────────────────────────────
