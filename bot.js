@@ -38,6 +38,7 @@ const PORT          = process.env.PORT                      || 3000;
 // Upstash Redis (apartment state)
 const REDIS_URL     = process.env.UPSTASH_REDIS_REST_URL    || "";
 const REDIS_TOKEN   = process.env.UPSTASH_REDIS_REST_TOKEN  || "";
+const RICH_MENU_ID  = process.env.RICH_MENU_ID              || "";
 
 // ─── LINE helpers ───────────────────────────────────────────────
 async function linePush(to, messages) {
@@ -324,9 +325,7 @@ function confirmButtons(roomNum, tenantName) {
 }
 
 async function setRichMenuForUser(userId) {
-  const idFile = path.join(__dirname, "data", "richmenu-id.txt");
-  if (!fs.existsSync(idFile)) return;
-  const richMenuId = fs.readFileSync(idFile, "utf8").trim();
+  const richMenuId = RICH_MENU_ID;
   if (!richMenuId) return;
   try {
     await fetch(`https://api.line.me/v2/bot/user/${userId}/richmenu/${richMenuId}`, {
@@ -818,9 +817,9 @@ app.post("/api/collect-followers", adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post("/api/set-richmenu-all", adminAuth, async (req, res) => {
-  const idFile = path.join(__dirname, "data", "richmenu-id.txt");
-  if (!fs.existsSync(idFile)) return res.status(400).json({ error: "ไม่พบ richmenu-id.txt" });
-  const richMenuId = fs.readFileSync(idFile, "utf8").trim(), rooms = await loadRooms();
+  const richMenuId = RICH_MENU_ID;
+  if (!richMenuId) return res.status(400).json({ error: "ไม่พบ RICH_MENU_ID ใน Environment Variables" });
+  const rooms = await loadRooms();
   const targets = Object.values(rooms).filter(r => r.lineUserId);
   let ok = 0, fail = 0;
   for (const room of targets) { try { await fetch(`https://api.line.me/v2/bot/user/${room.lineUserId}/richmenu/${richMenuId}`, { method: "POST", headers: { Authorization: `Bearer ${LINE_TOKEN}` } }); ok++; } catch { fail++; } await new Promise(r => setTimeout(r, 100)); }
