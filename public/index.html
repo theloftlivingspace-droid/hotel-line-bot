@@ -148,11 +148,21 @@ textarea.input{resize:vertical;line-height:1.7}
     <!-- DASHBOARD -->
     <div class="page active" id="page-dashboard">
       <div class="page-title">ภาพรวม</div>
-      <div class="stats">
+
+      <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">ผู้พักอาศัย</div>
+      <div class="stats" style="margin-bottom:20px">
         <div class="stat-card"><div class="val" id="s-total">—</div><div class="lbl">ห้องทั้งหมด</div></div>
-        <div class="stat-card green"><div class="val" id="s-reg">—</div><div class="lbl">ลงทะเบียนแล้ว</div></div>
+        <div class="stat-card green"><div class="val" id="s-reg">—</div><div class="lbl">ลงทะเบียน LINE แล้ว</div></div>
         <div class="stat-card blue"><div class="val" id="s-follow">—</div><div class="lbl">Followers</div></div>
         <div class="stat-card"><div class="val" id="s-active">—</div><div class="lbl">Active Users</div></div>
+      </div>
+
+      <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">ค่าเช่าเดือนนี้</div>
+      <div class="stats" style="margin-bottom:20px">
+        <div class="stat-card blue"><div class="val" id="s-billed">—</div><div class="lbl">ห้องที่มีบิล</div></div>
+        <div class="stat-card green"><div class="val" id="s-paid">—</div><div class="lbl">จ่ายแล้ว</div></div>
+        <div class="stat-card" style="border-left:3px solid #f59e0b"><div class="val" id="s-pending" style="color:#d97706">—</div><div class="lbl">รอชำระ</div></div>
+        <div class="stat-card" style="border-left:3px solid #0d9488"><div class="val" id="s-paid-amount" style="color:#0d9488;font-size:20px">—</div><div class="lbl">ยอดรับแล้ว (฿)</div></div>
       </div>
       <div class="panel">
         <div class="panel-head">เชิญผู้เช่าลงทะเบียน LINE</div>
@@ -188,7 +198,7 @@ textarea.input{resize:vertical;line-height:1.7}
           <div class="progress-bar"><div class="progress-fill" id="bill-progress-bar" style="width:0%"></div></div>
         </div>
         <div style="overflow-x:auto">
-          <table><thead><tr><th>ห้อง</th><th>ชื่อผู้เช่า</th><th style="text-align:right">ยอด (฿)</th><th>LINE</th><th>ส่งเดี่ยว</th></tr></thead>
+          <table><thead><tr><th>ห้อง</th><th>ชื่อผู้เช่า</th><th style="text-align:right">ยอด (฿)</th><th>LINE</th><th>สถานะ</th><th>ส่งเดี่ยว</th></tr></thead>
           <tbody id="bill-body"></tbody></table>
         </div>
       </div>
@@ -325,7 +335,7 @@ function showPage(name){
   if(name==="payments")loadPayments();
   if(name==="moveout")loadMoveouts();
   if(name==="history"){loadBillHistory();loadLogs();}
-  if(name==="bills"){renderBillTable();}
+  if(name==="bills"){ loadRooms(); }
 }
 
 async function login(){
@@ -352,7 +362,29 @@ function updateStats(s){
 async function loadRooms(){
   allRooms=await api("/api/rooms");
   renderRooms(Object.values(allRooms));
-  renderBillTable();
+  try {
+    const now=new Date(); const month=now.getMonth()+1; const year=now.getFullYear();
+    const payments=await api("/api/payments");
+    const confirmedThisMonth=payments.filter(p=>{
+      if(p.status!=="confirmed")return false;
+      const d=new Date(p.receivedAt);
+      return d.getMonth()+1===month && d.getFullYear()===year;
+    });
+    const paidRooms=new Set(confirmedThisMonth.flatMap(p=>p.roomNumber.split(",").map(r=>r.trim())));
+    renderBillTable(paidRooms);
+
+    // อัปเดต stat cards ค่าเช่า
+    const billedRooms=Object.values(allRooms).filter(r=>r.lineUserId);
+    const paidCount=billedRooms.filter(r=>paidRooms.has(r.roomNumber)).length;
+    const pendingCount=billedRooms.length-paidCount;
+    const paidAmount=billedRooms
+      .filter(r=>paidRooms.has(r.roomNumber))
+      .reduce((s,r)=>s+Number(r.amount),0);
+    document.getElementById("s-billed").textContent=billedRooms.length;
+    document.getElementById("s-paid").textContent=paidCount;
+    document.getElementById("s-pending").textContent=pendingCount;
+    document.getElementById("s-paid-amount").textContent=paidAmount.toLocaleString("th-TH");
+  } catch(e){ renderBillTable(); }
   const s=await api("/api/stats");
   updateStats(s);
 }
@@ -380,16 +412,22 @@ function renderRooms(list){
     </tr>`).join("");
 }
 
-function renderBillTable(){
+function renderBillTable(paidRooms=new Set()){
+  const now=new Date(); const month=now.getMonth()+1; const year=now.getFullYear();
   const tbody=document.getElementById("bill-body"); if(!tbody)return;
-  tbody.innerHTML=Object.values(allRooms).map(r=>`
-    <tr>
+  tbody.innerHTML=Object.values(allRooms).map(r=>{
+    const paid=paidRooms.has(r.roomNumber);
+    return `<tr style="${paid?"background:#f0fdf4":""}">
       <td><strong>${r.roomNumber}</strong></td>
       <td>${r.tenantName||"—"}</td>
       <td style="text-align:right">${Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})}</td>
       <td>${r.lineUserId?'<span class="pill pill-green">มี LINE</span>':'<span class="pill pill-gray">ไม่มี</span>'}</td>
+      <td>${paid
+        ? '<span class="pill pill-green">✅ จ่ายแล้ว</span>'
+        : '<span class="pill pill-yellow">รอชำระ</span>'}</td>
       <td>${r.lineUserId?`<button class="btn btn-success btn-sm" onclick="sendOneBill('${r.roomNumber}')">ส่งบิล</button>`:"—"}</td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 }
 
 async function uploadInvoice(input){
