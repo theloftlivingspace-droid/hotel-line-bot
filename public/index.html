@@ -367,7 +367,8 @@ async function loadRooms(){
     const payments=await api("/api/payments");
     const confirmedThisMonth=payments.filter(p=>{
       if(p.status!=="confirmed")return false;
-      const d=new Date(p.receivedAt);
+      // ใช้ updatedAt (วันที่ยืนยัน) ถ้าไม่มีใช้ receivedAt
+      const d=new Date(p.updatedAt||p.receivedAt);
       return d.getMonth()+1===month && d.getFullYear()===year;
     });
     const paidRooms=new Set(confirmedThisMonth.flatMap(p=>p.roomNumber.split(",").map(r=>r.trim())));
@@ -413,7 +414,6 @@ function renderRooms(list){
 }
 
 function renderBillTable(paidRooms=new Set()){
-  const now=new Date(); const month=now.getMonth()+1; const year=now.getFullYear();
   const tbody=document.getElementById("bill-body"); if(!tbody)return;
   tbody.innerHTML=Object.values(allRooms).map(r=>{
     const paid=paidRooms.has(r.roomNumber);
