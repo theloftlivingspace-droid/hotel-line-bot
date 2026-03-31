@@ -16,6 +16,7 @@ const GMAIL_USER  = process.env.GMAIL_USER;
 const GMAIL_PASS  = process.env.GMAIL_APP_PASSWORD;
 const LINE_TOKEN  = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const LINE_GROUP  = process.env.LINE_GROUP_ID;
+const ADMIN_USER  = process.env.ADMIN_USER_ID || LINE_GROUP; // ส่งหาแอดมินส่วนตัว
 const SHEET_ID    = process.env.GOOGLE_SHEET_ID;
 const SHEET_NAME  = process.env.GOOGLE_SHEET_NAME || "Sheet1";
 
@@ -60,8 +61,7 @@ async function addPendingRow(sheets, res) {
     valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
-      // A=เลขห้อง B=ชื่อแขก C=เช็คอิน D=เช็คเอาท์ E=channel F=resId G=note
-      values: [["รอยืนยัน", res.guest, res.checkIn, res.checkOut, res.channel, res.resId, res.note]],
+      values: [["รอยืนยัน", res.guest, res.checkIn, res.checkOut, res.resId, res.note]],
     },
   });
 }
@@ -69,11 +69,11 @@ async function addPendingRow(sheets, res) {
 async function updateRoomInSheet(sheets, resId, roomNumber) {
   const result = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:F",
+    range: SHEET_NAME + "!A:E",
   });
   const rows = result.data.values || [];
   for (let i = 1; i < rows.length; i++) {
-    if ((rows[i][5] || "").trim() === resId) {  // column F = index 5
+    if ((rows[i][4] || "").trim() === resId) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
         range: SHEET_NAME + "!A" + (i + 1),
@@ -183,7 +183,7 @@ async function sendNewBookingAlert(res) {
 
   await axios.post(
     "https://api.line.me/v2/bot/message/push",
-    { to: LINE_GROUP, messages: [{ type: "text", text: msg }] },
+    { to: ADMIN_USER, messages: [{ type: "text", text: msg }] },
     { headers: { Authorization: "Bearer " + LINE_TOKEN, "Content-Type": "application/json" } }
   );
   console.log("แจ้ง LINE: " + res.resId);
@@ -193,7 +193,7 @@ async function sendConfirmation(resId, roomNumber, guest) {
   const msg = "\u2705 อัปเดตแล้ว!\n" + guest + "\nห้อง " + roomNumber + " (" + resId + ")";
   await axios.post(
     "https://api.line.me/v2/bot/message/push",
-    { to: LINE_GROUP, messages: [{ type: "text", text: msg }] },
+    { to: ADMIN_USER, messages: [{ type: "text", text: msg }] },
     { headers: { Authorization: "Bearer " + LINE_TOKEN, "Content-Type": "application/json" } }
   );
 }
@@ -210,13 +210,13 @@ async function handleLineReply(messageText) {
 
   const result = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:F",
+    range: SHEET_NAME + "!A:E",
   });
   const rows = result.data.values || [];
   let resId = "";
   for (let i = rows.length - 1; i >= 1; i--) {
     if ((rows[i][0] || "").trim() === "รอยืนยัน") {
-      resId = (rows[i][5] || "").trim();  // column F = index 5
+      resId = (rows[i][4] || "").trim();
       break;
     }
   }
