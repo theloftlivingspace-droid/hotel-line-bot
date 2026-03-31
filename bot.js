@@ -94,6 +94,18 @@ async function redisSet(key, value) {
   } catch (e) { console.error("Redis SET error:", e.message); return false; }
 }
 
+async function redisDel(key) {
+  if (!REDIS_URL) return false;
+  try {
+    const res = await fetch(`${REDIS_URL}/del/${encodeURIComponent(key)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+    });
+    const data = await res.json();
+    return data.result >= 1;
+  } catch (e) { console.error("Redis DEL error:", e.message); return false; }
+}
+
 // ─── File helpers (fallback) ────────────────────────────────────
 const DATA_DIR      = path.join(__dirname, "data");
 const ROOMS_FILE    = path.join(DATA_DIR, "rooms.json");
@@ -263,31 +275,24 @@ async function handleAdminReply(text, userId) {
       const confirmMsg = "✅ อัปเดตแล้ว!\n" + guest + "\nห้อง " + roomNumber + " (" + resId + ")";
       await linePush(ADMIN_USER || userId, [{ type: "text", text: confirmMsg }]);
 
-      // ส่งกลุ่มแม่บ้านถ้าเช็คอินวันนี้หรือพรุ่งนี้ และจองมาหลัง 19:00
+      // ส่งกลุ่มแม่บ้านเฉพาะเมื่อเช็คอินวันนี้
       if (LINE_GROUP && row) {
         const checkIn  = normalizeDate(row[2] || "");
         const checkOut = normalizeDate(row[3] || "");
         const channel  = row[4] || "";
-
-        const nowBKK   = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
-        const today    = nowBKK.toISOString().slice(0, 10);
-        const tomorrow = (() => { const d = new Date(nowBKK); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
-        const after19  = nowBKK.getHours() >= 19;
-
-        const isCheckinSoon = (checkIn === today) || (checkIn === tomorrow && after19);
-
-        if (isCheckinSoon) {
-          const isAirbnb   = /ABB-|airbnb/i.test(channel);
+        const note     = row[5] || "";
+        const today    = new Date().toISOString().slice(0, 10);
+        if (checkIn === today) {
+          const isAirbnb = /ABB-|airbnb/i.test(channel);
           const depositLine = (!isAirbnb) ? "\n💰 เก็บมัดจำ 3,000 บาท" : "";
-          const label       = checkIn === today ? "เช็คอินวันนี้" : "เช็คอินพรุ่งนี้";
-          const sep         = "─────────────────────────";
-          const groupMsg    =
-            `\n🔔 ${label} (จองใหม่)\n` + sep + "\n" +
+          const sep = "─────────────────────────";
+          const groupMsg =
+            "\n🔔 เช็คอินวันนี้ (จองใหม่)\n" + sep + "\n" +
             `🔑 ห้อง ${roomNumber}  —  ${guest}\n` +
             `📅 ${formatThaiDate(checkIn)} → ${formatThaiDate(checkOut)}\n` +
             `📌 ${channel}` + depositLine + "\n" + sep;
           await linePush(LINE_GROUP, [{ type: "text", text: groupMsg }]);
-          console.log(`[Hotel] แจ้งกลุ่มแม่บ้าน ${label} ห้อง ${roomNumber}`);
+          console.log(`[Hotel] แจ้งกลุ่มแม่บ้าน เช็คอินวันนี้ ห้อง ${roomNumber}`);
         }
       }
     }
@@ -574,16 +579,30 @@ async function handlePostback(event) {
 // ═══════════════════════════════════════════════════════════════
 // APARTMENT — rent reminder
 // ═══════════════════════════════════════════════════════════════
+function getBillingCycle(now=new Date()){
+  const y=now.getFullYear(),m=now.getMonth();
+  const lastOfCurrent=new Date(y,m+1,0);
+  const isLastDay=now.getDate()===lastOfCurrent.getDate();
+  if(isLastDay){
+    const lastOfNext=new Date(y,m+2,0);
+    return{start:lastOfCurrent,end:new Date(lastOfNext-86400000)};
+  }else{
+    const lastOfPrev=new Date(y,m,0);
+    return{start:lastOfPrev,end:new Date(lastOfCurrent-86400000)};
+  }
+}
+
 async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
   const now = new Date(), day = forceDay || now.getDate();
-  const month = now.getMonth() + 1, year = now.getFullYear();
   if (!isTest && !onlyRoom && day !== 5 && (day < 8 || day > 15)) return;
   try {
     const rooms = await loadRooms(), payments = await loadPayments();
+    const {start,end}=getBillingCycle(now);
+    const endOfCycle=new Date(end); endOfCycle.setHours(23,59,59,999);
     const paidRooms = new Set(
       isTest ? [] :
       payments
-        .filter(p => { if (p.status !== "confirmed") return false; const d = new Date(p.receivedAt); return d.getMonth() + 1 === month && d.getFullYear() === year; })
+        .filter(p => { if (p.status !== "confirmed") return false; const d = new Date(p.receivedAt); return d >= start && d <= endOfCycle; })
         .flatMap(p => p.roomNumber.split(",").map(r => r.trim()))
     );
     const unpaidRooms = Object.values(rooms).filter(r => r.lineUserId && !paidRooms.has(r.roomNumber) && (!onlyRoom || r.roomNumber === onlyRoom));
@@ -621,40 +640,17 @@ const XLSX    = require("xlsx");
 
 const app     = express();
 const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "apt2025@secret";
 const LOG_FILE    = path.join(DATA_DIR, "send-log.json");
 
-// ─── Rate Limiter (in-memory) ────────────────────────────────────
-const rateLimitMap = new Map();
-function rateLimit(key, maxReq, windowMs) {
-  const now = Date.now();
-  const entry = rateLimitMap.get(key) || { count: 0, start: now };
-  if (now - entry.start > windowMs) { entry.count = 0; entry.start = now; }
-  entry.count++;
-  rateLimitMap.set(key, entry);
-  return entry.count > maxReq;
-}
-// ล้าง map ทุก 10 นาที กัน memory leak
-setInterval(() => rateLimitMap.clear(), 10 * 60 * 1000);
-
 function verifySignature(rawBody, signature) {
-  if (!LINE_SECRET) { console.warn("[Security] LINE_CHANNEL_SECRET ไม่ได้ตั้งค่า!"); return false; }
+  if (!LINE_SECRET) return true;
   const hash = crypto.createHmac("SHA256", LINE_SECRET).update(rawBody).digest("base64");
   return hash === signature;
 }
 function adminAuth(req, res, next) {
-  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
-  // Rate limit: 20 requests ต่อ IP ต่อนาที
-  if (rateLimit(`admin:${ip}`, 20, 60 * 1000)) {
-    console.warn(`[Security] Rate limit exceeded: ${ip}`);
-    return res.status(429).json({ error: "Too many requests" });
-  }
-  if (!ADMIN_TOKEN) return res.status(500).json({ error: "ADMIN_TOKEN ไม่ได้ตั้งค่า" });
   const token = req.headers["x-admin-token"] || req.query.token;
-  if (!token || token !== ADMIN_TOKEN) {
-    console.warn(`[Security] Unauthorized admin access: ${ip}`);
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  if (token !== ADMIN_TOKEN) return res.status(401).json({ error: "Unauthorized" });
   next();
 }
 
@@ -754,7 +750,16 @@ app.patch("/api/payments/:id", adminAuth, async (req, res) => {
   }
   res.json(payments[idx]);
 });
-app.post("/api/upload-invoice", adminAuth, upload.single("file"), async (req, res) => {
+app.delete("/api/payments/:id", adminAuth, async (req, res) => {
+  const payments = await loadPayments();
+  const idx = payments.findIndex(p => p.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "ไม่พบรายการ" });
+  payments.splice(idx, 1);
+  await savePayments(payments);
+  // ลบรูปสลิปออกจาก Redis ด้วย
+  await redisDel(`slip_img:${req.params.id}`);
+  res.json({ ok: true });
+}); adminAuth, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "ไม่พบไฟล์ที่อัปโหลด" });
   try {
     const wb = XLSX.read(req.file.buffer, { type: "buffer" }), ws = wb.Sheets[wb.SheetNames[0]];
