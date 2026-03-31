@@ -260,43 +260,9 @@ async function handleAdminReply(text, userId) {
   const match = text.trim().match(/^(?:ห้อง\s*)?(\d{2,3}\w*)$/);
   if (!match) return false;
   const roomNumber = match[1];
-  const sheets = getSheets();
-  const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:E" });
-  const rows = result.data.values || [];
-  let resId = "";
-  for (let i = rows.length - 1; i >= 1; i--) {
-    if ((rows[i][0] || "").trim() === "รอยืนยัน") { resId = (rows[i][4] || "").trim(); break; }
-  }
-  if (!resId) { console.log("ไม่มีการจองที่รอยืนยัน"); return false; }
-  try {
-    const { guest, row } = await updateRoomInSheet(sheets, resId, roomNumber);
-    if (guest) {
-      // ยืนยันกลับหาแอดมิน
-      const confirmMsg = "✅ อัปเดตแล้ว!\n" + guest + "\nห้อง " + roomNumber + " (" + resId + ")";
-      await linePush(ADMIN_USER || userId, [{ type: "text", text: confirmMsg }]);
 
-      // ส่งกลุ่มแม่บ้านเฉพาะเมื่อเช็คอินวันนี้
-      if (LINE_GROUP && row) {
-        const checkIn  = normalizeDate(row[2] || "");
-        const checkOut = normalizeDate(row[3] || "");
-        const channel  = row[4] || "";
-        const note     = row[5] || "";
-        const today    = new Date().toISOString().slice(0, 10);
-        if (checkIn === today) {
-          const isAirbnb = /ABB-|airbnb/i.test(channel);
-          const depositLine = (!isAirbnb) ? "\n💰 เก็บมัดจำ 3,000 บาท" : "";
-          const sep = "─────────────────────────";
-          const groupMsg =
-            "\n🔔 เช็คอินวันนี้ (จองใหม่)\n" + sep + "\n" +
-            `🔑 ห้อง ${roomNumber}  —  ${guest}\n` +
-            `📅 ${formatThaiDate(checkIn)} → ${formatThaiDate(checkOut)}\n` +
-            `📌 ${channel}` + depositLine + "\n" + sep;
-          await linePush(LINE_GROUP, [{ type: "text", text: groupMsg }]);
-          console.log(`[Hotel] แจ้งกลุ่มแม่บ้าน เช็คอินวันนี้ ห้อง ${roomNumber}`);
-        }
-      }
-    }
-  } catch (err) { console.error("admin reply error: " + err.message); return false; }
+  // ใช้ handleLineReply จาก email-sync (รองรับ column F=resId)
+  await emailHandleReply(text, userId);
   return true;
 }
 
@@ -581,16 +547,15 @@ async function handlePostback(event) {
 // APARTMENT — rent reminder
 // ═══════════════════════════════════════════════════════════════
 function getBillingCycle(now=new Date()){
-  const y=now.getFullYear(),m=now.getMonth();
-  const lastOfCurrent=new Date(y,m+1,0);
-  const isLastDay=now.getDate()===lastOfCurrent.getDate();
-  if(isLastDay){
-    const lastOfNext=new Date(y,m+2,0);
-    return{start:lastOfCurrent,end:new Date(lastOfNext-86400000)};
-  }else{
-    const lastOfPrev=new Date(y,m,0);
-    return{start:lastOfPrev,end:new Date(lastOfCurrent-86400000)};
-  }
+  // คำนวณ billing cycle โดยใช้ timezone ไทย
+  // cycle = วันสุดท้ายของเดือนก่อน → วันสุดท้ายของเดือนปัจจุบัน (inclusive)
+  const bkk = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+  const y = bkk.getFullYear(), m = bkk.getMonth();
+  const start = new Date(y, m, 0); // วันสุดท้ายของเดือนก่อน (เช่น 28/29 ก.พ. หรือ 31 มี.ค.)
+  const end   = new Date(y, m+1, 0); // วันสุดท้ายของเดือนนี้
+  start.setHours(0,0,0,0);
+  end.setHours(23,59,59,999);
+  return { start, end };
 }
 
 async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
@@ -922,7 +887,7 @@ function startWebhookServer() {
 console.log("Hotel + Apartment LINE Bot พร้อมทำงาน");
 ensureDir(DATA_DIR);
 
-const { syncEmails } = require("./email-sync");
+const { syncEmails, handleLineReply: emailHandleReply } = require("./email-sync");
 console.log("Email Sync พร้อมทำงาน (ทุก 30 นาที)");
 console.log("GOOGLE_SHEET_ID:", process.env.GOOGLE_SHEET_ID || "(ไม่พบ)");
 console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่พบ)");
