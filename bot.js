@@ -751,6 +751,32 @@ app.patch("/api/payments/:id", adminAuth, async (req, res) => {
   }
   res.json(payments[idx]);
 });
+app.post("/api/payments/manual", adminAuth, async (req, res) => {
+  const { roomNumber, tenantName, amount, status, imageBase64 } = req.body;
+  if (!roomNumber) return res.status(400).json({ error: "roomNumber required" });
+  const paymentId = Date.now().toString();
+  const payment = {
+    id: paymentId,
+    roomNumber: String(roomNumber),
+    tenantName: tenantName || "",
+    userId: null,
+    messageId: null,
+    imageBase64: imageBase64 || null,
+    slipAmount: amount ? Number(amount) : null,
+    expectedAmount: amount ? Number(amount) : 0,
+    amountMatch: true,
+    isSlip: true, bankName: null, date: null,
+    status: status || "confirmed",
+    receivedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    manualEntry: true,
+  };
+  const payments = await loadPayments();
+  payments.unshift(payment);
+  await savePayments(payments.slice(0, 200));
+  console.log(`[Manual Payment] ห้อง ${roomNumber} ยอด ${amount} สถานะ ${status} id=${paymentId}`);
+  res.json({ ok: true, id: paymentId });
+});
 app.delete("/api/payments/:id", adminAuth, async (req, res) => {
   const payments = await loadPayments();
   const idx = payments.findIndex(p => p.id === req.params.id);
