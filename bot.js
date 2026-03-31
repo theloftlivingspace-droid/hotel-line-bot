@@ -263,24 +263,31 @@ async function handleAdminReply(text, userId) {
       const confirmMsg = "✅ อัปเดตแล้ว!\n" + guest + "\nห้อง " + roomNumber + " (" + resId + ")";
       await linePush(ADMIN_USER || userId, [{ type: "text", text: confirmMsg }]);
 
-      // ส่งกลุ่มแม่บ้านเฉพาะเมื่อเช็คอินวันนี้
+      // ส่งกลุ่มแม่บ้านถ้าเช็คอินวันนี้หรือพรุ่งนี้ และจองมาหลัง 19:00
       if (LINE_GROUP && row) {
         const checkIn  = normalizeDate(row[2] || "");
         const checkOut = normalizeDate(row[3] || "");
         const channel  = row[4] || "";
-        const note     = row[5] || "";
-        const today    = new Date().toISOString().slice(0, 10);
-        if (checkIn === today) {
-          const isAirbnb = /ABB-|airbnb/i.test(channel);
+
+        const nowBKK   = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+        const today    = nowBKK.toISOString().slice(0, 10);
+        const tomorrow = (() => { const d = new Date(nowBKK); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
+        const after19  = nowBKK.getHours() >= 19;
+
+        const isCheckinSoon = (checkIn === today) || (checkIn === tomorrow && after19);
+
+        if (isCheckinSoon) {
+          const isAirbnb   = /ABB-|airbnb/i.test(channel);
           const depositLine = (!isAirbnb) ? "\n💰 เก็บมัดจำ 3,000 บาท" : "";
-          const sep = "─────────────────────────";
-          const groupMsg =
-            "\n🔔 เช็คอินวันนี้ (จองใหม่)\n" + sep + "\n" +
+          const label       = checkIn === today ? "เช็คอินวันนี้" : "เช็คอินพรุ่งนี้";
+          const sep         = "─────────────────────────";
+          const groupMsg    =
+            `\n🔔 ${label} (จองใหม่)\n` + sep + "\n" +
             `🔑 ห้อง ${roomNumber}  —  ${guest}\n` +
             `📅 ${formatThaiDate(checkIn)} → ${formatThaiDate(checkOut)}\n` +
             `📌 ${channel}` + depositLine + "\n" + sep;
           await linePush(LINE_GROUP, [{ type: "text", text: groupMsg }]);
-          console.log(`[Hotel] แจ้งกลุ่มแม่บ้าน เช็คอินวันนี้ ห้อง ${roomNumber}`);
+          console.log(`[Hotel] แจ้งกลุ่มแม่บ้าน ${label} ห้อง ${roomNumber}`);
         }
       }
     }
@@ -614,17 +621,40 @@ const XLSX    = require("xlsx");
 
 const app     = express();
 const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "apt2025@secret";
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const LOG_FILE    = path.join(DATA_DIR, "send-log.json");
 
+// ─── Rate Limiter (in-memory) ────────────────────────────────────
+const rateLimitMap = new Map();
+function rateLimit(key, maxReq, windowMs) {
+  const now = Date.now();
+  const entry = rateLimitMap.get(key) || { count: 0, start: now };
+  if (now - entry.start > windowMs) { entry.count = 0; entry.start = now; }
+  entry.count++;
+  rateLimitMap.set(key, entry);
+  return entry.count > maxReq;
+}
+// ล้าง map ทุก 10 นาที กัน memory leak
+setInterval(() => rateLimitMap.clear(), 10 * 60 * 1000);
+
 function verifySignature(rawBody, signature) {
-  if (!LINE_SECRET) return true;
+  if (!LINE_SECRET) { console.warn("[Security] LINE_CHANNEL_SECRET ไม่ได้ตั้งค่า!"); return false; }
   const hash = crypto.createHmac("SHA256", LINE_SECRET).update(rawBody).digest("base64");
   return hash === signature;
 }
 function adminAuth(req, res, next) {
+  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+  // Rate limit: 20 requests ต่อ IP ต่อนาที
+  if (rateLimit(`admin:${ip}`, 20, 60 * 1000)) {
+    console.warn(`[Security] Rate limit exceeded: ${ip}`);
+    return res.status(429).json({ error: "Too many requests" });
+  }
+  if (!ADMIN_TOKEN) return res.status(500).json({ error: "ADMIN_TOKEN ไม่ได้ตั้งค่า" });
   const token = req.headers["x-admin-token"] || req.query.token;
-  if (token !== ADMIN_TOKEN) return res.status(401).json({ error: "Unauthorized" });
+  if (!token || token !== ADMIN_TOKEN) {
+    console.warn(`[Security] Unauthorized admin access: ${ip}`);
+    return res.status(401).json({ error: "Unauthorized" });
+  }
   next();
 }
 
