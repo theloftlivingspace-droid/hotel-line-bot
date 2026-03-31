@@ -759,7 +759,8 @@ app.delete("/api/payments/:id", adminAuth, async (req, res) => {
   // ลบรูปสลิปออกจาก Redis ด้วย
   await redisDel(`slip_img:${req.params.id}`);
   res.json({ ok: true });
-}); adminAuth, upload.single("file"), async (req, res) => {
+});
+app.post("/api/upload-invoice", adminAuth, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "ไม่พบไฟล์ที่อัปโหลด" });
   try {
     const wb = XLSX.read(req.file.buffer, { type: "buffer" }), ws = wb.Sheets[wb.SheetNames[0]];
