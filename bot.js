@@ -489,8 +489,9 @@ async function handleImageMessage(event) {
   const { userId } = event.source;
   const users = await loadUsers(), rooms = await loadRooms();
   const user = users[userId];
-  if (!user?.roomNumber) { await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนส่งสลิปค่ะ" }]); return; }
   const myRooms = Object.values(rooms).filter(r => r.lineUserId === userId);
+  if (!myRooms.length) { await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนส่งสลิปค่ะ" }]); return; }
+  if (user && !user.roomNumber) { users[userId].roomNumber = myRooms[0].roomNumber; users[userId].updatedAt = new Date().toISOString(); await saveUsers(users); }
   const roomList = myRooms.map(r => r.roomNumber).join(", ");
   const totalAmount = myRooms.reduce((s, r) => s + Number(r.amount), 0);
   try {
@@ -499,7 +500,7 @@ async function handleImageMessage(event) {
 
     // save รูปใน payment record โดยตรง (Redis จะเก็บแยก key โดย savePayments)
     const payment = {
-      id: paymentId, roomNumber: roomList, tenantName: rooms[user.roomNumber]?.tenantName,
+      id: paymentId, roomNumber: roomList, tenantName: myRooms[0]?.tenantName,
       userId, messageId: event.message.id,
       imageBase64: base64,
       slipAmount: null, expectedAmount: totalAmount, amountMatch: false,
