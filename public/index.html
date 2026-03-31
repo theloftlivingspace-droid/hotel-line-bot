@@ -158,12 +158,13 @@ textarea.input{resize:vertical;line-height:1.7}
       </div>
 
       <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">ค่าเช่าเดือนนี้</div>
-      <div class="stats" style="margin-bottom:20px">
+      <div class="stats" style="margin-bottom:8px">
         <div class="stat-card blue"><div class="val" id="s-billed">—</div><div class="lbl">ห้องที่มีบิล</div></div>
         <div class="stat-card green"><div class="val" id="s-paid">—</div><div class="lbl">จ่ายแล้ว</div></div>
         <div class="stat-card" style="border-left:3px solid #f59e0b"><div class="val" id="s-pending" style="color:#d97706">—</div><div class="lbl">รอชำระ</div></div>
         <div class="stat-card" style="border-left:3px solid #0d9488"><div class="val" id="s-paid-amount" style="color:#0d9488;font-size:20px">—</div><div class="lbl">ยอดรับแล้ว (฿)</div></div>
       </div>
+      <div id="s-cycle-label" style="font-size:11px;color:#94a3b8;margin-bottom:20px;padding-left:2px"></div>
       <div class="panel">
         <div class="panel-head">เชิญผู้เช่าลงทะเบียน LINE</div>
         <div class="panel-body">
@@ -230,7 +231,7 @@ textarea.input{resize:vertical;line-height:1.7}
     <div class="page" id="page-payments">
       <div class="page-title">สลิปการชำระเงิน</div>
       <div class="panel">
-        <div class="panel-head"><span>รายการสลิปทั้งหมด</span><button class="btn btn-ghost btn-sm" onclick="loadPayments()">รีเฟรช</button></div>
+        <div class="panel-head"><span>รายการสลิปทั้งหมด</span><div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" onclick="loadPayments()">รีเฟรช</button><button class="btn btn-sm" style="background:transparent;color:#b91c1c;border:1px solid #fca5a5" onclick="deleteOldPayments()">🗑 ลบสลิปก่อนวันนี้</button></div></div>
         <div id="payments-list"><div class="empty">ยังไม่มีสลิปที่ส่งมาค่ะ</div></div>
       </div>
     </div>
@@ -309,6 +310,19 @@ textarea.input{resize:vertical;line-height:1.7}
 <script>
 let TOKEN="",allRooms={};
 
+function getBillingCycle(now=new Date()){
+  const y=now.getFullYear(),m=now.getMonth();
+  const lastOfCurrent=new Date(y,m+1,0);
+  const isLastDay=now.getDate()===lastOfCurrent.getDate();
+  if(isLastDay){
+    const lastOfNext=new Date(y,m+2,0);
+    return{start:lastOfCurrent,end:new Date(lastOfNext-86400000)};
+  }else{
+    const lastOfPrev=new Date(y,m,0);
+    return{start:lastOfPrev,end:new Date(lastOfCurrent-86400000)};
+  }
+}
+
 async function api(path,opts={}){
   const sep=path.includes("?")?"&":"?";
   const r=await fetch(`${path}${sep}token=${TOKEN}`,{headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},...opts});
@@ -363,14 +377,18 @@ async function loadRooms(){
   allRooms=await api("/api/rooms");
   renderRooms(Object.values(allRooms));
   try {
-    const now=new Date(); const month=now.getMonth()+1; const year=now.getFullYear();
+    const now=new Date();
+    const {start,end}=getBillingCycle(now);
+    const endOfCycle=new Date(end); endOfCycle.setHours(23,59,59,999);
     const payments=await api("/api/payments");
     const confirmedThisMonth=payments.filter(p=>{
       if(p.status!=="confirmed")return false;
-      // ใช้ updatedAt (วันที่ยืนยัน) ถ้าไม่มีใช้ receivedAt
       const d=new Date(p.updatedAt||p.receivedAt);
-      return d.getMonth()+1===month && d.getFullYear()===year;
+      return d>=start && d<=endOfCycle;
     });
+    const fmt=d=>d.toLocaleDateString("th-TH",{day:"numeric",month:"short"});
+    const lbl=document.getElementById("s-cycle-label");
+    if(lbl)lbl.textContent=`รอบ ${fmt(start)} – ${fmt(end)}`;
     const paidRooms=new Set(confirmedThisMonth.flatMap(p=>p.roomNumber.split(",").map(r=>r.trim())));
     renderBillTable(paidRooms);
 
@@ -549,12 +567,38 @@ async function loadPayments(){
             <div style="display:flex;gap:6px;margin-top:10px">
               <button class="btn btn-success btn-sm" onclick="updatePayment('${p.id}','confirmed','')">✓ ยืนยัน</button>
               <button class="btn btn-danger btn-sm" onclick="rejectPayment('${p.id}')">✗ ปฏิเสธ</button>
+              <button class="btn btn-sm" style="background:transparent;color:#94a3b8;border:1px solid #e2e8f0" onclick="deleteOnePayment('${p.id}','${p.roomNumber}')">🗑</button>
             </div>
           </div>
         </div>
       </div>
     `).join("");
   }catch(e){console.error(e);}
+}
+async function deleteOnePayment(id,roomNumber){
+  if(!confirm(`ลบสลิปห้อง ${roomNumber}?\nการลบนี้ไม่สามารถย้อนกลับได้`))return;
+  try{
+    await fetch(`/api/payments/${id}?token=${TOKEN}`,{method:"DELETE",headers:{"x-admin-token":TOKEN}});
+    loadPayments();loadRooms();
+  }catch(e){alert("เกิดข้อผิดพลาด: "+e.message);}
+}
+async function deleteOldPayments(){
+  try{
+    const payments=await api("/api/payments");
+    const today=new Date(); today.setHours(0,0,0,0);
+    const old=payments.filter(p=>new Date(p.receivedAt)<today);
+    if(!old.length){alert("ไม่มีสลิปที่รับก่อนวันนี้ค่ะ");return;}
+    if(!confirm(`จะลบสลิปที่รับก่อนวันนี้ทั้งหมด ${old.length} รายการ?\n\nการลบนี้ไม่สามารถย้อนกลับได้`))return;
+    let deleted=0,failed=0;
+    for(const p of old){
+      try{
+        await fetch(`/api/payments/${p.id}?token=${TOKEN}`,{method:"DELETE",headers:{"x-admin-token":TOKEN}});
+        deleted++;
+      }catch{failed++;}
+    }
+    alert(`ลบสำเร็จ ${deleted} รายการ${failed>0?` · ล้มเหลว ${failed} รายการ`:""}`);
+    loadPayments();loadRooms();
+  }catch(e){alert("เกิดข้อผิดพลาด: "+e.message);}
 }
 async function updatePayment(id,status,note){await api(`/api/payments/${id}`,{method:"PATCH",body:JSON.stringify({status,note})});loadPayments();}
 async function rejectPayment(id){const note=prompt("ระบุเหตุผลที่ปฏิเสธ:");if(note===null)return;await updatePayment(id,"rejected",note);}
