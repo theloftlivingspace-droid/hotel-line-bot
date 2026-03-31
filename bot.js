@@ -594,7 +594,10 @@ function getBillingCycle(now=new Date()){
 }
 
 async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
-  const now = new Date(), day = forceDay || now.getDate();
+  // ใช้วันที่ตาม timezone ไทย (Asia/Bangkok) ไม่ใช่ UTC
+  const now = new Date();
+  const bangkokDate = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+  const day = forceDay || bangkokDate.getDate();
   if (!isTest && !onlyRoom && day !== 5 && (day < 8 || day > 15)) return;
   try {
     const rooms = await loadRooms(), payments = await loadPayments();
