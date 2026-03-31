@@ -1,8 +1,8 @@
 /**
- * Email Sync v4
- * - ดึงอีเมลจองจาก Little Hotelier ทุก 30 นาที → แจ้ง LINE กลุ่มแม่บ้าน
- * - สร้าง stable resId จากชื่อแขก + วันเช็คอิน (ป้องกันแจ้งซ้ำ)
- * - รองรับ HTML email
+ * Email Sync v5
+ * - แก้ parser ดึงชื่อแขกได้ถูกต้อง (ตัด "New Reservation XX" prefix)
+ * - resId stable จากชื่อแขกจริง + วันเช็คอิน
+ * - column E = channel, F = resId, G = note
  */
 
 require("dotenv").config();
@@ -16,7 +16,6 @@ const GMAIL_USER  = process.env.GMAIL_USER;
 const GMAIL_PASS  = process.env.GMAIL_APP_PASSWORD;
 const LINE_TOKEN  = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const LINE_GROUP  = process.env.LINE_GROUP_ID;
-const ADMIN_USER  = process.env.ADMIN_USER_ID || LINE_GROUP; // ส่งหาแอดมินส่วนตัว
 const SHEET_ID    = process.env.GOOGLE_SHEET_ID;
 const SHEET_NAME  = process.env.GOOGLE_SHEET_NAME || "Sheet1";
 
@@ -55,32 +54,34 @@ async function appendEmailLog(sheets, res) {
 }
 
 async function addPendingRow(sheets, res) {
+  // A=รอยืนยัน B=ชื่อแขก C=เช็คอิน D=เช็คเอาท์ E=channel F=resId G=note
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:F",
+    range: SHEET_NAME + "!A:G",
     valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
-      values: [["รอยืนยัน", res.guest, res.checkIn, res.checkOut, res.resId, res.note]],
+      values: [["รอยืนยัน", res.guest, res.checkIn, res.checkOut, res.channel, res.resId, res.note]],
     },
   });
 }
 
 async function updateRoomInSheet(sheets, resId, roomNumber) {
+  // ค้นหา resId ใน column F (index 5)
   const result = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:E",
+    range: SHEET_NAME + "!A:F",
   });
   const rows = result.data.values || [];
   for (let i = 1; i < rows.length; i++) {
-    if ((rows[i][4] || "").trim() === resId) {
+    if ((rows[i][5] || "").trim() === resId) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
         range: SHEET_NAME + "!A" + (i + 1),
         valueInputOption: "RAW",
         requestBody: { values: [[roomNumber]] },
       });
-      return rows[i][1] || resId;
+      return rows[i][1] || resId; // คืนชื่อแขก
     }
   }
   return null;
@@ -122,22 +123,31 @@ function parseEmail(email) {
   const subject = email.subject || "";
   if (!body || body.length < 20) return null;
 
-  // รูปแบบ: "NAME booked the ROOM for DATE to DATE on CHANNEL"
-  const m = body.match(
-    /(.+?)\s+booked\s+the\s+(.+?)\s+for\s+(.+?)\s+to\s+(.+?)\s+on\s+([^\n\r]+)/im
+  // ตัด prefix ขยะ เช่น "New Reservation 96 New Reservation " ออกก่อน
+  // แล้วค่อย match รูปแบบ "NAME booked the ROOM for DATE to DATE on CHANNEL"
+  const cleaned = body.replace(/(?:New\s+Reservation\s+(?:\d+\s+)?)+/gi, " ").replace(/\s+/g, " ").trim();
+
+  const m = cleaned.match(
+    /([A-Za-zÀ-ÿ][\w\s,.''-]{1,50}?)\s+booked\s+the\s+(.+?)\s+for\s+(.+?)\s+to\s+(.+?)\s+on\s+([^\n\r]+)/im
   );
-  if (!m) return null;
+  if (!m) {
+    console.log("parse ไม่ได้ — cleaned:", cleaned.substring(0, 200));
+    return null;
+  }
 
   const checkIn  = isoDate(m[3].trim());
   const checkOut = isoDate(m[4].trim());
-  if (!checkIn || !checkOut) return null;
+  if (!checkIn || !checkOut) {
+    console.log("วันที่ผิด:", m[3], m[4]);
+    return null;
+  }
 
-  // ตัด trailing text ออกจาก channel
+  // ตัด trailing text ออกจาก channel เช่น "Airbnb We're here to help"
   const channel = m[5].trim()
-    .replace(/\s+(We're|For\s+guidance|Click\s+here|\.)\b.*/i, "")
+    .replace(/\s+(We're|For\s+guidance|Click\s+here|\.).*$/i, "")
     .trim();
 
-  // สร้าง stable resId: ใช้รหัสจองถ้ามี, ไม่มีสร้างจาก guest+checkin
+  // resId: ใช้รหัสจองถ้ามี (ABB-xxx, BDC-xxx), ไม่มีสร้างจากชื่อแขกจริง+เช็คอิน
   const codeMatch = (subject + " " + body).match(/\b[A-Z]{2,4}-[A-Z0-9]{6,}\b/);
   const guestKey  = m[1].trim().toLowerCase().replace(/[^a-z]/g, "").substring(0, 10);
   const resId     = codeMatch
@@ -146,7 +156,7 @@ function parseEmail(email) {
 
   const isAirbnb = /airbnb/i.test(channel) || resId.startsWith("ABB-");
 
-  console.log("parse: " + resId + " | " + m[1].trim() + " | " + channel + " | " + checkIn + " -> " + checkOut);
+  console.log("parse OK: " + resId + " | " + m[1].trim() + " | " + channel + " | " + checkIn + " -> " + checkOut);
 
   return {
     resId,
@@ -183,7 +193,7 @@ async function sendNewBookingAlert(res) {
 
   await axios.post(
     "https://api.line.me/v2/bot/message/push",
-    { to: ADMIN_USER, messages: [{ type: "text", text: msg }] },
+    { to: LINE_GROUP, messages: [{ type: "text", text: msg }] },
     { headers: { Authorization: "Bearer " + LINE_TOKEN, "Content-Type": "application/json" } }
   );
   console.log("แจ้ง LINE: " + res.resId);
@@ -193,7 +203,7 @@ async function sendConfirmation(resId, roomNumber, guest) {
   const msg = "\u2705 อัปเดตแล้ว!\n" + guest + "\nห้อง " + roomNumber + " (" + resId + ")";
   await axios.post(
     "https://api.line.me/v2/bot/message/push",
-    { to: ADMIN_USER, messages: [{ type: "text", text: msg }] },
+    { to: LINE_GROUP, messages: [{ type: "text", text: msg }] },
     { headers: { Authorization: "Bearer " + LINE_TOKEN, "Content-Type": "application/json" } }
   );
 }
@@ -208,15 +218,16 @@ async function handleLineReply(messageText) {
   const roomNumber = match[1];
   const sheets = getSheets();
 
+  // หาแถวล่าสุดที่ยัง "รอยืนยัน" — resId อยู่ column F (index 5)
   const result = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:E",
+    range: SHEET_NAME + "!A:F",
   });
   const rows = result.data.values || [];
   let resId = "";
   for (let i = rows.length - 1; i >= 1; i--) {
     if ((rows[i][0] || "").trim() === "รอยืนยัน") {
-      resId = (rows[i][4] || "").trim();
+      resId = (rows[i][5] || "").trim();
       break;
     }
   }
@@ -226,6 +237,7 @@ async function handleLineReply(messageText) {
   try {
     const guest = await updateRoomInSheet(sheets, resId, roomNumber);
     if (guest) await sendConfirmation(resId, roomNumber, guest);
+    else console.log("ไม่เจอ resId ใน Sheet: " + resId);
   } catch (err) {
     console.error("reply error: " + err.message);
   }
@@ -283,8 +295,7 @@ async function syncEmails() {
   try {
     const sheets = getSheets();
     const log    = await getEmailLog(sheets);
-    // ข้าม header row ถ้ามี
-    const dataRows = log.length > 0 && log[0][0] === "resId" ? log.slice(1) : log;
+    const dataRows = (log.length > 0 && log[0][0] === "resId") ? log.slice(1) : log;
     const notifiedIds = new Set(dataRows.map((r) => r[0]).filter(Boolean));
     console.log("email_log: " + notifiedIds.size + " รายการ");
 
@@ -295,7 +306,7 @@ async function syncEmails() {
     let newCount = 0;
     for (const email of emails) {
       const res = parseEmail(email);
-      if (!res) { console.log("parse ไม่ได้ — ข้ามไป"); continue; }
+      if (!res) continue;
       if (notifiedIds.has(res.resId)) { console.log("แจ้งไปแล้ว: " + res.resId); continue; }
 
       await addPendingRow(sheets, res);
