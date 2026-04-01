@@ -666,7 +666,7 @@ app.post("/webhook", (req, res) => {
 
 // ─── Static + Health ─────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, "public")));
-app.use(express.json());
+app.use(express.json({ limit: "20mb" }));
 app.get("/health", (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
 // ─── Admin API ────────────────────────────────────────────────────
