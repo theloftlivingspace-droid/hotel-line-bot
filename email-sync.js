@@ -22,6 +22,36 @@ const SHEET_ID     = process.env.GOOGLE_SHEET_ID;
 const SHEET_NAME   = process.env.GOOGLE_SHEET_NAME || "Sheet1";
 
 // ─────────────────────────────────────────────
+// Room type map
+// ─────────────────────────────────────────────
+const ROOM_TYPE_MAP = {
+  "103": "Elegance",
+  "108": "Retro",
+  "113": "Legacy",
+  "203": "Allure",
+  "204": "Elegance",
+  "205": "Allure",
+  "214": "Legacy",
+  "300": "Luxury",
+};
+function getRoomLabel(num) {
+  const type = ROOM_TYPE_MAP[String(num).trim()];
+  return type ? num + " " + type : num;
+}
+function getRoomTypeFromName(roomName) {
+  const types = [...new Set(Object.values(ROOM_TYPE_MAP))];
+  const n = roomName.toLowerCase();
+  const matched = types.find(t => n.includes(t.toLowerCase()));
+  return matched || null;
+}
+function getRoomsOfType(typeName) {
+  if (!typeName) return [];
+  return Object.entries(ROOM_TYPE_MAP)
+    .filter(([, t]) => t === typeName)
+    .map(([num]) => num);
+}
+
+// ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
 function todayBKK() {
@@ -120,19 +150,35 @@ async function linePush(to, text) {
   );
 }
 
-async function sendNewBookingToAdmin(res) {
+async function sendNewBookingToAdmin(res, roomLabel) {
+  // roomLabel: ถ้ามี = auto-assigned แล้ว, ถ้าไม่มี = รอแอดมินตอบ
   const depositLine = res.isAirbnb ? "" : "\n\u{1F4B0} เก็บมัดจำ 3,000 บาท";
   const sep = "\u2500".repeat(25);
+  const roomType = getRoomTypeFromName(res.roomName || "");
+  const matchedRooms = getRoomsOfType(roomType);
+
+  let roomLine, hintLine;
+  if (roomLabel) {
+    roomLine = "\u{1F511} " + roomLabel + " (กำหนดอัตโนมัติ)";
+    hintLine = "\u{2139}\uFE0F แจ้งเพื่อทราบ ไม่ต้องตอบกลับ";
+  } else if (matchedRooms.length > 1) {
+    roomLine = "\u{1F6CF} " + (roomType || "(รอระบุห้อง)");
+    hintLine = "\u{1F447} ตอบกลับห้องไหน: " + matchedRooms.join(" หรือ ");
+  } else {
+    roomLine = "\u{1F6CF} (รอระบุห้อง)";
+    hintLine = "\u{1F447} ตอบกลับแค่ตัวเลข เช่น  204";
+  }
+
   const msg =
-    "\n\u{1F514} จองใหม่! กรุณาระบุเลขห้อง\n" + sep + "\n" +
+    "\n\u{1F514} จองใหม่!\n" + sep + "\n" +
     "\u{1F464} " + res.guest + "\n" +
-    "\u{1F6CF} " + res.roomName + "\n" +
+    roomLine + "\n" +
     "\u{1F4C5} " + thaiDate(res.checkIn) + " \u2192 " + thaiDate(res.checkOut) + "\n" +
     "\u{1F4CC} " + res.channel +
     depositLine + "\n" + sep + "\n" +
-    "\u{1F447} ตอบกลับแค่ตัวเลข เช่น  203";
+    hintLine;
   await linePush(ADMIN_ID, msg);
-  console.log("แจ้ง admin: " + res.resId);
+  console.log("แจ้ง admin: " + res.resId + (roomLabel ? " [auto=" + roomLabel + "]" : ""));
 }
 
 async function sendConfirmToAdmin(resId, roomNumber, guest) {
@@ -201,7 +247,7 @@ function parseEmail(email) {
 
   const channel = m[5].trim().replace(/\s+(We're|For\s+guidance|Click\s+here|\.).*$/i, "").trim();
   const codeMatch = (subject + " " + body).match(/\b[A-Z]{2,4}-[A-Z0-9]{6,}\b/);
-  const guestKey  = m[1].trim().toLowerCase().replace(/[^a-z]/g, "").substring(0, 10);
+  const guestKey  = m[1].trim().toLowerCase().replace(/[^a-z]/g, "") .substring(0, 10) || Buffer.from(m[1].trim()).toString("hex").substring(0, 10);
   const resId     = codeMatch ? codeMatch[0] : ("BK-" + guestKey + "-" + checkIn.replace(/-/g, ""));
   const isAirbnb  = /airbnb/i.test(channel) || resId.startsWith("ABB-");
 
@@ -217,10 +263,10 @@ async function handleLineReply(messageText, sourceId) {
   // รับเฉพาะจาก admin ส่วนตัว
   if (sourceId !== ADMIN_ID) return;
 
-  const match = messageText.trim().match(/^(?:ห้อง\s*)?(\d{2,3}\w*)$/);
+  const match = messageText.trim().match(/^(?:ห้อง\s*)?(\d{2,3})$/);
   if (!match) return;
 
-  const roomNumber = match[1];
+  const roomNumber = getRoomLabel(match[1]);
   const sheets = getSheets();
 
   const result = await sheets.spreadsheets.values.get({
@@ -246,10 +292,9 @@ async function handleLineReply(messageText, sourceId) {
 
     const today    = todayBKK();
     const tomorrow = tomorrowBKK();
-    const hour     = hourBKK();
 
-    // แจ้งกลุ่มแม่บ้านทันทีถ้า: เช็คอินวันนี้ หรือ เช็คอินพรุ่งนี้และเลย 19:00 แล้ว
-    if (info.checkIn === today || (info.checkIn === tomorrow && hour >= 19)) {
+    // แจ้งกลุ่มแม่บ้านทันทีถ้าเช็คอินวันนี้หรือพรุ่งนี้
+    if (info.checkIn === today || info.checkIn === tomorrow) {
       await sendUrgentToGroup(roomNumber, info.guest, info.checkIn, info.note);
     }
   } catch (err) {
@@ -319,7 +364,23 @@ async function syncEmails() {
 
       await addPendingRow(sheets, res);
       await appendEmailLog(sheets, res);
-      await sendNewBookingToAdmin(res);
+
+      // auto-assign ถ้า type นั้นมีแค่ห้องเดียว
+      const roomType = getRoomTypeFromName(res.roomName || "");
+      const matchedRooms = getRoomsOfType(roomType);
+      if (matchedRooms.length === 1) {
+        const roomLabel = getRoomLabel(matchedRooms[0]);
+        await updateRoomInSheet(sheets, res.resId, roomLabel);
+        console.log("auto-assign: " + res.resId + " -> " + roomLabel);
+        const today = todayBKK(), tomorrow = tomorrowBKK();
+        if (res.checkIn === today || res.checkIn === tomorrow) {
+          await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note);
+        }
+        await sendNewBookingToAdmin(res, roomLabel);
+      } else {
+        await sendNewBookingToAdmin(res, null);
+      }
+
       notifiedIds.add(res.resId);
       newCount++;
     }
