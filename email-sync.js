@@ -22,6 +22,24 @@ const SHEET_ID     = process.env.GOOGLE_SHEET_ID;
 const SHEET_NAME   = process.env.GOOGLE_SHEET_NAME || "Sheet1";
 
 // ─────────────────────────────────────────────
+// Room type map  ← แก้ให้ตรงกับห้องจริง
+// ─────────────────────────────────────────────
+const ROOM_TYPE_MAP = {
+  "103": "Elegance",
+  "108": "Retro",
+  "113": "Legacy",
+  "203": "Allure",
+  "204": "Elegance",
+  "205": "Allure",
+  "214": "Legacy",
+  "300": "Luxury",
+};
+function getRoomLabel(num) {
+  const type = ROOM_TYPE_MAP[String(num).trim()];
+  return type ? num + " " + type : num;
+}
+
+// ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
 function todayBKK() {
@@ -92,7 +110,7 @@ async function addPendingRow(sheets, res) {
 async function updateRoomInSheet(sheets, resId, roomNumber) {
   const result = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:F",
+    range: SHEET_NAME + "!A:G",
   });
   const rows = result.data.values || [];
   for (let i = 1; i < rows.length; i++) {
@@ -130,7 +148,7 @@ async function sendNewBookingToAdmin(res) {
     "\u{1F4C5} " + thaiDate(res.checkIn) + " \u2192 " + thaiDate(res.checkOut) + "\n" +
     "\u{1F4CC} " + res.channel +
     depositLine + "\n" + sep + "\n" +
-    "\u{1F447} ตอบกลับแค่ตัวเลข เช่น  203";
+    "\u{1F447} ตอบกลับแค่ตัวเลข เช่น  204";
   await linePush(ADMIN_ID, msg);
   console.log("แจ้ง admin: " + res.resId);
 }
@@ -210,10 +228,10 @@ async function handleLineReply(messageText, sourceId) {
   // รับเฉพาะจาก admin ส่วนตัว
   if (sourceId !== ADMIN_ID) return;
 
-  const match = messageText.trim().match(/^(?:ห้อง\s*)?(\d{2,3}\w*)$/);
+  const match = messageText.trim().match(/^(?:ห้อง\s*)?(\d{2,3})$/);
   if (!match) return;
 
-  const roomNumber = match[1];
+  const roomNumber = getRoomLabel(match[1]);
   const sheets = getSheets();
 
   const result = await sheets.spreadsheets.values.get({

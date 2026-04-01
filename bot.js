@@ -195,7 +195,7 @@ function filterByDate(rows, targetDate) {
     if (!row || row.length < 4) continue;
     const room = (row[0] || "").trim(), guest = (row[1] || "").trim();
     const checkIn = normalizeDate(row[2] || ""), checkOut = normalizeDate(row[3] || "");
-    const note = (row[5] || "").trim();
+    const note = (row[6] || "").trim();
     if (!room || !guest) continue;
     const isAirbnb = /ABB-/i.test(row[4] || "") || /airbnb/i.test(row[4] || "");
     const displayNote = (!isAirbnb && note) ? note : "";
@@ -244,7 +244,7 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
   const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:F" });
   const rows = result.data.values || [];
   for (let i = 1; i < rows.length; i++) {
-    if ((rows[i][4] || "").trim() === resId) {
+    if ((rows[i][5] || "").trim() === resId) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A" + (i + 1),
         valueInputOption: "RAW", requestBody: { values: [[roomNumber]] },
@@ -257,7 +257,7 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
 async function handleAdminReply(text, userId) {
   // รับเฉพาะจากแอดมิน
   if (ADMIN_USER && userId !== ADMIN_USER) return false;
-  const match = text.trim().match(/^(?:ห้อง\s*)?(\d{2,3}\w*)$/);
+  const match = text.trim().match(/^(?:ห้อง\s*)?(\d{2,3})$/);
   if (!match) return false;
   const roomNumber = match[1];
 
