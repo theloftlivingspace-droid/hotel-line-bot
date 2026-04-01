@@ -195,7 +195,7 @@ function filterByDate(rows, targetDate) {
     if (!row || row.length < 4) continue;
     const room = (row[0] || "").trim(), guest = (row[1] || "").trim();
     const checkIn = normalizeDate(row[2] || ""), checkOut = normalizeDate(row[3] || "");
-    const note = (row[6] || "").trim();
+    const note = (row[5] || "").trim();
     if (!room || !guest) continue;
     const isAirbnb = /ABB-/i.test(row[4] || "") || /airbnb/i.test(row[4] || "");
     const displayNote = (!isAirbnb && note) ? note : "";
@@ -244,7 +244,7 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
   const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:F" });
   const rows = result.data.values || [];
   for (let i = 1; i < rows.length; i++) {
-    if ((rows[i][5] || "").trim() === resId) {
+    if ((rows[i][4] || "").trim() === resId) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A" + (i + 1),
         valueInputOption: "RAW", requestBody: { values: [[roomNumber]] },
@@ -257,7 +257,7 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
 async function handleAdminReply(text, userId) {
   // รับเฉพาะจากแอดมิน
   if (ADMIN_USER && userId !== ADMIN_USER) return false;
-  const match = text.trim().match(/^(?:ห้อง\s*)?(\d{2,3})$/);
+  const match = text.trim().match(/^(?:ห้อง\s*)?(\d{2,3}\w*)$/);
   if (!match) return false;
   const roomNumber = match[1];
 
@@ -822,6 +822,17 @@ app.post("/api/send-rent-one/:roomNumber", adminAuth, async (req, res) => {
   const amount = Number(room.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 });
   try { await linePush(room.lineUserId, [{ type: "text", text: `คุณมีค่าเช่าห้อง ${room.roomNumber} เดือนนี้จำนวน ${amount} บาท ชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล ดูรายละเอียดกดลิงค์นี้ ${room.invoiceLink}` }]); res.json({ ok: true }); }
   catch (e) { res.json({ ok: false, error: e.message }); }
+});
+app.post("/api/send-msg-one", adminAuth, async (req, res) => {
+  const { roomNumber, message } = req.body;
+  const rooms = await loadRooms();
+  const room = rooms[roomNumber];
+  if (!room) return res.json({ ok: false, error: "ไม่พบห้อง" });
+  if (!room.lineUserId) return res.json({ ok: false, error: "ไม่มี LINE ID" });
+  try {
+    await linePush(room.lineUserId, [{ type: "text", text: message }]);
+    res.json({ ok: true });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 app.post("/api/broadcast", adminAuth, async (req, res) => {
   const { message } = req.body; if (!message) return res.status(400).json({ error: "message required" });
