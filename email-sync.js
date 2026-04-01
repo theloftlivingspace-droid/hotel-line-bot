@@ -240,7 +240,7 @@ async function handleLineReply(messageText, sourceId) {
   });
   const rows = result.data.values || [];
   let resId = "";
-  for (let i = rows.length - 1; i >= 1; i--) {
+  for (let i = 1; i < rows.length; i++) {
     if ((rows[i][0] || "").trim() === "รอยืนยัน") {
       resId = (rows[i][5] || "").trim();
       break;
