@@ -22,24 +22,6 @@ const SHEET_ID     = process.env.GOOGLE_SHEET_ID;
 const SHEET_NAME   = process.env.GOOGLE_SHEET_NAME || "Sheet1";
 
 // ─────────────────────────────────────────────
-// Room type map  ← แก้ให้ตรงกับห้องจริง
-// ─────────────────────────────────────────────
-const ROOM_TYPE_MAP = {
-  "103": "Elegance",
-  "108": "Retro",
-  "113": "Legacy",
-  "203": "Allure",
-  "204": "Elegance",
-  "205": "Allure",
-  "214": "Legacy",
-  "300": "Luxury",
-};
-function getRoomLabel(num) {
-  const type = ROOM_TYPE_MAP[String(num).trim()];
-  return type ? num + " " + type : num;
-}
-
-// ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
 function todayBKK() {
@@ -110,7 +92,7 @@ async function addPendingRow(sheets, res) {
 async function updateRoomInSheet(sheets, resId, roomNumber) {
   const result = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:G",
+    range: SHEET_NAME + "!A:F",
   });
   const rows = result.data.values || [];
   for (let i = 1; i < rows.length; i++) {
@@ -148,7 +130,7 @@ async function sendNewBookingToAdmin(res) {
     "\u{1F4C5} " + thaiDate(res.checkIn) + " \u2192 " + thaiDate(res.checkOut) + "\n" +
     "\u{1F4CC} " + res.channel +
     depositLine + "\n" + sep + "\n" +
-    "\u{1F447} ตอบกลับแค่ตัวเลข เช่น  204";
+    "\u{1F447} ตอบกลับแค่ตัวเลข เช่น  203";
   await linePush(ADMIN_ID, msg);
   console.log("แจ้ง admin: " + res.resId);
 }
@@ -202,13 +184,20 @@ function parseEmail(email) {
 
   const cleaned = body.replace(/(?:New\s+Reservation\s+(?:\d+\s+)?)+/gi, " ").replace(/\s+/g, " ").trim();
   const m = cleaned.match(
-    /([A-Za-zÀ-ÿ][\w\s,.''-]{1,50}?)\s+booked\s+the\s+(.+?)\s+for\s+(.+?)\s+to\s+(.+?)\s+on\s+([^\n\r]+)/im
+    /([\p{L}\u4e00-\u9fff][\p{L}\u4e00-\u9fff\w\s,.''-]{1,50}?)\s+booked\s+the\s+(.+?)\s+for\s+(.+?)\s+to\s+(.+?)\s+on\s+([^\n\r]+)/imu
   );
-  if (!m) return null;
+  if (!m) {
+    console.log("parse FAIL (no match): subject=" + subject.substring(0, 80));
+    console.log("parse FAIL body(200):", cleaned.substring(0, 200));
+    return null;
+  }
 
   const checkIn  = isoDate(m[3].trim());
   const checkOut = isoDate(m[4].trim());
-  if (!checkIn || !checkOut) return null;
+  if (!checkIn || !checkOut) {
+    console.log("parse FAIL (date): in=" + m[3].trim() + " out=" + m[4].trim());
+    return null;
+  }
 
   const channel = m[5].trim().replace(/\s+(We're|For\s+guidance|Click\s+here|\.).*$/i, "").trim();
   const codeMatch = (subject + " " + body).match(/\b[A-Z]{2,4}-[A-Z0-9]{6,}\b/);
@@ -228,10 +217,10 @@ async function handleLineReply(messageText, sourceId) {
   // รับเฉพาะจาก admin ส่วนตัว
   if (sourceId !== ADMIN_ID) return;
 
-  const match = messageText.trim().match(/^(?:ห้อง\s*)?(\d{2,3})$/);
+  const match = messageText.trim().match(/^(?:ห้อง\s*)?(\d{2,3}\w*)$/);
   if (!match) return;
 
-  const roomNumber = getRoomLabel(match[1]);
+  const roomNumber = match[1];
   const sheets = getSheets();
 
   const result = await sheets.spreadsheets.values.get({
@@ -240,7 +229,7 @@ async function handleLineReply(messageText, sourceId) {
   });
   const rows = result.data.values || [];
   let resId = "";
-  for (let i = 1; i < rows.length; i++) {
+  for (let i = rows.length - 1; i >= 1; i--) {
     if ((rows[i][0] || "").trim() === "รอยืนยัน") {
       resId = (rows[i][5] || "").trim();
       break;
