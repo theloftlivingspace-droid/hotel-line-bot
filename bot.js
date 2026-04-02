@@ -823,17 +823,6 @@ app.post("/api/send-rent-one/:roomNumber", adminAuth, async (req, res) => {
   try { await linePush(room.lineUserId, [{ type: "text", text: `คุณมีค่าเช่าห้อง ${room.roomNumber} เดือนนี้จำนวน ${amount} บาท ชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล ดูรายละเอียดกดลิงค์นี้ ${room.invoiceLink}` }]); res.json({ ok: true }); }
   catch (e) { res.json({ ok: false, error: e.message }); }
 });
-app.post("/api/send-msg-one", adminAuth, async (req, res) => {
-  const { roomNumber, message } = req.body;
-  const rooms = await loadRooms();
-  const room = rooms[roomNumber];
-  if (!room) return res.json({ ok: false, error: "ไม่พบห้อง" });
-  if (!room.lineUserId) return res.json({ ok: false, error: "ไม่มี LINE ID" });
-  try {
-    await linePush(room.lineUserId, [{ type: "text", text: message }]);
-    res.json({ ok: true });
-  } catch (e) { res.json({ ok: false, error: e.message }); }
-});
 app.post("/api/broadcast", adminAuth, async (req, res) => {
   const { message } = req.body; if (!message) return res.status(400).json({ error: "message required" });
   const targets = Object.values(await loadRooms()).filter(r => r.lineUserId);
@@ -887,6 +876,68 @@ app.patch("/api/moveout-requests/:idx", adminAuth, async (req, res) => {
   }
   res.json({ ok: true });
 });
+
+// ─── TEMP: migrate resId ─────────────────────────────────────────
+// ลบออกหลังจาก GET /api/migrate-resid?token=... แล้ว
+function getPrefix(channel) {
+  if (/airbnb/i.test(channel))    return "ABB";
+  if (/booking/i.test(channel))   return "BKC";
+  if (/expedia/i.test(channel))   return "EXP";
+  if (/trip\.com/i.test(channel)) return "TRP";
+  return "OTH";
+}
+function makeNewResId(channel, guest, checkIn) {
+  const key  = guest.trim().toLowerCase().replace(/[^a-z]/g, "").substring(0, 10)
+               || Buffer.from(guest.trim()).toString("hex").substring(0, 10);
+  const date = checkIn.replace(/-/g, "");
+  return getPrefix(channel) + "-" + key + "-" + date;
+}
+app.get("/api/migrate-resid", adminAuth, async (req, res) => {
+  try {
+    const sheets = getSheets();
+    const log = [];
+    const updates = [];
+
+    // Sheet1 A:G
+    const s1 = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:G" });
+    const rows1 = s1.data.values || [];
+    for (let i = 1; i < rows1.length; i++) {
+      const [,guest,,, channel, resId] = rows1[i];
+      const checkIn = rows1[i][2] || "";
+      if (!resId || !guest || !checkIn) continue;
+      const newId = makeNewResId(channel || "", guest, checkIn);
+      if (newId === resId) continue;
+      updates.push({ range: SHEET_NAME + "!F" + (i+1), values: [[newId]] });
+      log.push("Sheet1 row " + (i+1) + ": " + resId + " → " + newId);
+    }
+
+    // email_log A:F
+    const s2 = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: "email_log!A:F" });
+    const rows2 = s2.data.values || [];
+    for (let i = 0; i < rows2.length; i++) {
+      const resId = (rows2[i][0] || "").trim();
+      const guest = (rows2[i][1] || "").trim();
+      const checkIn = (rows2[i][3] || "").trim();
+      if (!resId || !guest || !checkIn) continue;
+      // หา channel จาก Sheet1
+      const match = rows1.find(r => (r[5] || "").trim() === resId);
+      const channel = match ? (match[4] || "") : "";
+      const newId = makeNewResId(channel, guest, checkIn);
+      if (newId === resId) continue;
+      updates.push({ range: "email_log!A" + (i+1), values: [[newId]] });
+      log.push("email_log row " + (i+1) + ": " + resId + " → " + newId);
+    }
+
+    if (updates.length) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: SHEET_ID,
+        requestBody: { valueInputOption: "RAW", data: updates },
+      });
+    }
+    res.json({ ok: true, updated: updates.length, log });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+// ─── END TEMP ────────────────────────────────────────────────────
 
 function startWebhookServer() {
   app.listen(PORT, () => console.log("Webhook port " + PORT));
