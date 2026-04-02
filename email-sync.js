@@ -248,8 +248,12 @@ function parseEmail(email) {
   const channel = m[5].trim().replace(/\s+(We're|For\s+guidance|Click\s+here|\.).*$/i, "").trim();
   const codeMatch = (subject + " " + body).match(/\b[A-Z]{2,4}-[A-Z0-9]{6,}\b/);
   const guestKey  = m[1].trim().toLowerCase().replace(/[^a-z]/g, "") .substring(0, 10) || Buffer.from(m[1].trim()).toString("hex").substring(0, 10);
-  const resId     = codeMatch ? codeMatch[0] : ("BK-" + guestKey + "-" + checkIn.replace(/-/g, ""));
-  const isAirbnb  = /airbnb/i.test(channel) || resId.startsWith("ABB-");
+  const isAirbnb  = /airbnb/i.test(channel);
+  const prefix    = /airbnb/i.test(channel)     ? "ABB" :
+                    /booking/i.test(channel)     ? "BKC" :
+                    /expedia/i.test(channel)     ? "EXP" :
+                    /trip\.com/i.test(channel)  ? "TRP" : "OTH";
+  const resId     = codeMatch ? codeMatch[0] : (prefix + "-" + guestKey + "-" + checkIn.replace(/-/g, ""));
 
   console.log("parse OK: " + resId + " | " + m[1].trim() + " | " + channel + " | " + checkIn + " -> " + checkOut);
 
