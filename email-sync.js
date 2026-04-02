@@ -268,6 +268,45 @@ async function handleLineReply(messageText, sourceId) {
   // รับเฉพาะจาก admin ส่วนตัว
   if (sourceId !== ADMIN_ID) return;
 
+  // ─── ยกเลิกการจอง ───────────────────────────
+  const cancelMatch = messageText.trim().match(/^ยกเลิก\s+(.+)$/i);
+  if (cancelMatch) {
+    const guestName = cancelMatch[1].trim().toLowerCase();
+    const sheets = getSheets();
+    const result = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: SHEET_NAME + "!A:G",
+    });
+    const rows = result.data.values || [];
+    let found = null;
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const rowGuest = (rows[i][1] || "").trim().toLowerCase();
+      const rowStatus = (rows[i][0] || "").trim();
+      if (rowGuest.includes(guestName) && rowStatus !== "ยกเลิก") {
+        found = { rowIdx: i, guest: rows[i][1], room: rows[i][0], resId: rows[i][5] };
+        break;
+      }
+    }
+    if (!found) {
+      await linePush(ADMIN_ID, "\u274C ไม่พบการจองของ " + cancelMatch[1].trim());
+      return;
+    }
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: SHEET_NAME + "!A" + (found.rowIdx + 1),
+      valueInputOption: "RAW",
+      requestBody: { values: [["ยกเลิก"]] },
+    });
+    await linePush(ADMIN_ID,
+      "\u2705 ยกเลิกแล้ว\n" +
+      "\u{1F464} " + found.guest + "\n" +
+      "\u{1F3E8} ห้อง " + (found.room || "รอยืนยัน") + "\n" +
+      "\u{1F4CB} " + (found.resId || "-")
+    );
+    console.log("ยกเลิก: " + found.resId + " | " + found.guest);
+    return;
+  }
+
   const match = messageText.trim().match(/^(?:ห้อง\s*)?(\d{2,3})$/);
   if (!match) return;
 
