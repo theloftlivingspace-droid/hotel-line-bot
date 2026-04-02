@@ -245,7 +245,8 @@ function parseEmail(email) {
     return null;
   }
 
-  const channel = m[5].trim().replace(/\s+(We're|For\s+guidance|Click\s+here|\.).*$/i, "").trim();
+  const channel = m[5].trim().replace(/\s+(We're|For\s+guidance|Click\s+here|\.).*$/i, "").trim()
+    .replace(/Trip\.com.*$/i, "Trip").replace(/Booking\.com.*$/i, "Booking");
   const codeMatch = (subject + " " + body).match(/\b[A-Z]{2,4}-[A-Z0-9]{6,}\b/);
   const guestKey  = m[1].trim().toLowerCase().replace(/[^a-z]/g, "") .substring(0, 10) || Buffer.from(m[1].trim()).toString("hex").substring(0, 10);
   const isAirbnb  = /airbnb/i.test(channel);
