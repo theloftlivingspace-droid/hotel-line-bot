@@ -292,9 +292,10 @@ async function handleLineReply(messageText, sourceId) {
 
     const today    = todayBKK();
     const tomorrow = tomorrowBKK();
+    const hour     = hourBKK();
 
-    // แจ้งกลุ่มแม่บ้านทันทีถ้าเช็คอินวันนี้หรือพรุ่งนี้
-    if (info.checkIn === today || info.checkIn === tomorrow) {
+    // วันนี้ → แจ้งทันที, พรุ่งนี้ + หลัง 19:00 → แจ้งทันที, พรุ่งนี้ + ก่อน 19:00 → รอ cron
+    if (info.checkIn === today || (info.checkIn === tomorrow && hour >= 19)) {
       await sendUrgentToGroup(roomNumber, info.guest, info.checkIn, info.note);
     }
   } catch (err) {
@@ -372,8 +373,8 @@ async function syncEmails() {
         const roomLabel = getRoomLabel(matchedRooms[0]);
         await updateRoomInSheet(sheets, res.resId, roomLabel);
         console.log("auto-assign: " + res.resId + " -> " + roomLabel);
-        const today = todayBKK(), tomorrow = tomorrowBKK();
-        if (res.checkIn === today || res.checkIn === tomorrow) {
+        const today = todayBKK(), tomorrow = tomorrowBKK(), hour = hourBKK();
+        if (res.checkIn === today || (res.checkIn === tomorrow && hour >= 19)) {
           await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note);
         }
         await sendNewBookingToAdmin(res, roomLabel);
