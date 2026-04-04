@@ -188,8 +188,9 @@ async function sendConfirmToAdmin(resId, roomNumber, guest) {
 async function sendUrgentToGroup(roomNumber, guest, checkIn, note) {
   const depositLine = note ? "\n\u{1F4B0} " + note : "";
   const sep = "\u2500".repeat(25);
+  const dayLabel = checkIn === todayBKK() ? "เช็คอินวันนี้" : "เช็คอินพรุ่งนี้";
   const msg =
-    "\n\u{1F6A8} จองใหม่! เช็คอินวันนี้\n" + sep + "\n" +
+    "\n\u{1F6A8} จองใหม่! " + dayLabel + "\n" + sep + "\n" +
     "\u{1F511} ห้อง " + roomNumber + "  \u2014  " + guest + "\n" +
     "\u{1F4C5} เช็คอิน " + thaiDate(checkIn) +
     depositLine + "\n" + sep;
