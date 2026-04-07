@@ -148,12 +148,23 @@ textarea.input{resize:vertical;line-height:1.7}
     <!-- DASHBOARD -->
     <div class="page active" id="page-dashboard">
       <div class="page-title">ภาพรวม</div>
-      <div class="stats">
+
+      <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">ผู้พักอาศัย</div>
+      <div class="stats" style="margin-bottom:20px">
         <div class="stat-card"><div class="val" id="s-total">—</div><div class="lbl">ห้องทั้งหมด</div></div>
-        <div class="stat-card green"><div class="val" id="s-reg">—</div><div class="lbl">ลงทะเบียนแล้ว</div></div>
+        <div class="stat-card green"><div class="val" id="s-reg">—</div><div class="lbl">ลงทะเบียน LINE แล้ว</div></div>
         <div class="stat-card blue"><div class="val" id="s-follow">—</div><div class="lbl">Followers</div></div>
         <div class="stat-card"><div class="val" id="s-active">—</div><div class="lbl">Active Users</div></div>
       </div>
+
+      <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">ค่าเช่าเดือนนี้</div>
+      <div class="stats" style="margin-bottom:8px">
+        <div class="stat-card blue"><div class="val" id="s-billed">—</div><div class="lbl">ห้องที่มีบิล</div></div>
+        <div class="stat-card green"><div class="val" id="s-paid">—</div><div class="lbl">จ่ายแล้ว</div></div>
+        <div class="stat-card" style="border-left:3px solid #f59e0b"><div class="val" id="s-pending" style="color:#d97706">—</div><div class="lbl">รอชำระ</div></div>
+        <div class="stat-card" style="border-left:3px solid #0d9488"><div class="val" id="s-paid-amount" style="color:#0d9488;font-size:20px">—</div><div class="lbl">ยอดรับแล้ว (฿)</div></div>
+      </div>
+      <div id="s-cycle-label" style="font-size:11px;color:#94a3b8;margin-bottom:20px;padding-left:2px"></div>
       <div class="panel">
         <div class="panel-head">เชิญผู้เช่าลงทะเบียน LINE</div>
         <div class="panel-body">
@@ -188,7 +199,7 @@ textarea.input{resize:vertical;line-height:1.7}
           <div class="progress-bar"><div class="progress-fill" id="bill-progress-bar" style="width:0%"></div></div>
         </div>
         <div style="overflow-x:auto">
-          <table><thead><tr><th>ห้อง</th><th>ชื่อผู้เช่า</th><th style="text-align:right">ยอด (฿)</th><th>LINE</th><th>ส่งเดี่ยว</th></tr></thead>
+          <table><thead><tr><th>ห้อง</th><th>ชื่อผู้เช่า</th><th style="text-align:right">ยอด (฿)</th><th>LINE</th><th>สถานะ</th><th>ส่งเดี่ยว</th></tr></thead>
           <tbody id="bill-body"></tbody></table>
         </div>
       </div>
@@ -220,7 +231,7 @@ textarea.input{resize:vertical;line-height:1.7}
     <div class="page" id="page-payments">
       <div class="page-title">สลิปการชำระเงิน</div>
       <div class="panel">
-        <div class="panel-head"><span>รายการสลิปทั้งหมด</span><button class="btn btn-ghost btn-sm" onclick="loadPayments()">รีเฟรช</button></div>
+        <div class="panel-head"><span>รายการสลิปทั้งหมด</span><div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" onclick="loadPayments()">รีเฟรช</button><button class="btn btn-primary btn-sm" onclick="openManualPayModal()">➕ เพิ่มการชำระเงิน</button><button class="btn btn-sm" style="background:transparent;color:#b91c1c;border:1px solid #fca5a5" onclick="deleteOldPayments()">🗑 ลบสลิปก่อนวันนี้</button></div></div>
         <div id="payments-list"><div class="empty">ยังไม่มีสลิปที่ส่งมาค่ะ</div></div>
       </div>
     </div>
@@ -299,6 +310,19 @@ textarea.input{resize:vertical;line-height:1.7}
 <script>
 let TOKEN="",allRooms={};
 
+function getBillingCycle(now=new Date()){
+  const y=now.getFullYear(),m=now.getMonth();
+  const lastOfCurrent=new Date(y,m+1,0);
+  const isLastDay=now.getDate()===lastOfCurrent.getDate();
+  if(isLastDay){
+    const lastOfNext=new Date(y,m+2,0);
+    return{start:lastOfCurrent,end:new Date(lastOfNext-86400000)};
+  }else{
+    const lastOfPrev=new Date(y,m,0);
+    return{start:lastOfPrev,end:new Date(lastOfCurrent-86400000)};
+  }
+}
+
 async function api(path,opts={}){
   const sep=path.includes("?")?"&":"?";
   const r=await fetch(`${path}${sep}token=${TOKEN}`,{headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},...opts});
@@ -325,7 +349,7 @@ function showPage(name){
   if(name==="payments")loadPayments();
   if(name==="moveout")loadMoveouts();
   if(name==="history"){loadBillHistory();loadLogs();}
-  if(name==="bills"){renderBillTable();}
+  if(name==="bills"){ loadRooms(); }
 }
 
 async function login(){
@@ -352,7 +376,34 @@ function updateStats(s){
 async function loadRooms(){
   allRooms=await api("/api/rooms");
   renderRooms(Object.values(allRooms));
-  renderBillTable();
+  try {
+    const now=new Date();
+    const {start,end}=getBillingCycle(now);
+    const endOfCycle=new Date(end); endOfCycle.setHours(23,59,59,999);
+    const payments=await api("/api/payments");
+    const confirmedThisMonth=payments.filter(p=>{
+      if(p.status!=="confirmed")return false;
+      const d=new Date(p.updatedAt||p.receivedAt);
+      return d>=start && d<=endOfCycle;
+    });
+    const fmt=d=>d.toLocaleDateString("th-TH",{day:"numeric",month:"short"});
+    const lbl=document.getElementById("s-cycle-label");
+    if(lbl)lbl.textContent=`รอบ ${fmt(start)} – ${fmt(end)}`;
+    const paidRooms=new Set(confirmedThisMonth.flatMap(p=>p.roomNumber.split(",").map(r=>r.trim())));
+    renderBillTable(paidRooms);
+
+    // อัปเดต stat cards ค่าเช่า
+    const billedRooms=Object.values(allRooms).filter(r=>r.lineUserId);
+    const paidCount=billedRooms.filter(r=>paidRooms.has(r.roomNumber)).length;
+    const pendingCount=billedRooms.length-paidCount;
+    const paidAmount=billedRooms
+      .filter(r=>paidRooms.has(r.roomNumber))
+      .reduce((s,r)=>s+Number(r.amount),0);
+    document.getElementById("s-billed").textContent=billedRooms.length;
+    document.getElementById("s-paid").textContent=paidCount;
+    document.getElementById("s-pending").textContent=pendingCount;
+    document.getElementById("s-paid-amount").textContent=paidAmount.toLocaleString("th-TH");
+  } catch(e){ renderBillTable(); }
   const s=await api("/api/stats");
   updateStats(s);
 }
@@ -380,16 +431,21 @@ function renderRooms(list){
     </tr>`).join("");
 }
 
-function renderBillTable(){
+function renderBillTable(paidRooms=new Set()){
   const tbody=document.getElementById("bill-body"); if(!tbody)return;
-  tbody.innerHTML=Object.values(allRooms).map(r=>`
-    <tr>
+  tbody.innerHTML=Object.values(allRooms).map(r=>{
+    const paid=paidRooms.has(r.roomNumber);
+    return `<tr style="${paid?"background:#f0fdf4":""}">
       <td><strong>${r.roomNumber}</strong></td>
       <td>${r.tenantName||"—"}</td>
-      <td style="text-align:right">${Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})}</td>
+      <td style="text-align:right">${r.invoiceLink?`<a href="${r.invoiceLink}" target="_blank" style="color:#0d9488;font-weight:700;text-decoration:none;border-bottom:1px dashed #0d9488">${Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})}</a>`:Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})}</td>
       <td>${r.lineUserId?'<span class="pill pill-green">มี LINE</span>':'<span class="pill pill-gray">ไม่มี</span>'}</td>
+      <td>${paid
+        ? '<span class="pill pill-green">✅ จ่ายแล้ว</span>'
+        : '<span class="pill pill-yellow">รอชำระ</span>'}</td>
       <td>${r.lineUserId?`<button class="btn btn-success btn-sm" onclick="sendOneBill('${r.roomNumber}')">ส่งบิล</button>`:"—"}</td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 }
 
 async function uploadInvoice(input){
@@ -511,12 +567,38 @@ async function loadPayments(){
             <div style="display:flex;gap:6px;margin-top:10px">
               <button class="btn btn-success btn-sm" onclick="updatePayment('${p.id}','confirmed','')">✓ ยืนยัน</button>
               <button class="btn btn-danger btn-sm" onclick="rejectPayment('${p.id}')">✗ ปฏิเสธ</button>
+              <button class="btn btn-sm" style="background:transparent;color:#94a3b8;border:1px solid #e2e8f0" onclick="deleteOnePayment('${p.id}','${p.roomNumber}')">🗑</button>
             </div>
           </div>
         </div>
       </div>
     `).join("");
   }catch(e){console.error(e);}
+}
+async function deleteOnePayment(id,roomNumber){
+  if(!confirm(`ลบสลิปห้อง ${roomNumber}?\nการลบนี้ไม่สามารถย้อนกลับได้`))return;
+  try{
+    await fetch(`/api/payments/${id}?token=${TOKEN}`,{method:"DELETE",headers:{"x-admin-token":TOKEN}});
+    loadPayments();loadRooms();
+  }catch(e){alert("เกิดข้อผิดพลาด: "+e.message);}
+}
+async function deleteOldPayments(){
+  try{
+    const payments=await api("/api/payments");
+    const today=new Date(); today.setHours(0,0,0,0);
+    const old=payments.filter(p=>new Date(p.receivedAt)<today);
+    if(!old.length){alert("ไม่มีสลิปที่รับก่อนวันนี้ค่ะ");return;}
+    if(!confirm(`จะลบสลิปที่รับก่อนวันนี้ทั้งหมด ${old.length} รายการ?\n\nการลบนี้ไม่สามารถย้อนกลับได้`))return;
+    let deleted=0,failed=0;
+    for(const p of old){
+      try{
+        await fetch(`/api/payments/${p.id}?token=${TOKEN}`,{method:"DELETE",headers:{"x-admin-token":TOKEN}});
+        deleted++;
+      }catch{failed++;}
+    }
+    alert(`ลบสำเร็จ ${deleted} รายการ${failed>0?` · ล้มเหลว ${failed} รายการ`:""}`);
+    loadPayments();loadRooms();
+  }catch(e){alert("เกิดข้อผิดพลาด: "+e.message);}
 }
 async function updatePayment(id,status,note){await api(`/api/payments/${id}`,{method:"PATCH",body:JSON.stringify({status,note})});loadPayments();}
 async function rejectPayment(id){const note=prompt("ระบุเหตุผลที่ปฏิเสธ:");if(note===null)return;await updatePayment(id,"rejected",note);}
@@ -631,6 +713,62 @@ async function sendModalMsg(){
   }catch(e){document.getElementById("modal-result").textContent="เกิดข้อผิดพลาด: "+e.message;}
   btn.disabled=false; btn.textContent="ส่ง";
 }
+function openManualPayModal(){
+  const sel=document.getElementById("mp-room");
+  sel.innerHTML='<option value="">— เลือกห้อง —</option>'+
+    Object.values(allRooms).sort((a,b)=>a.roomNumber.localeCompare(b.roomNumber,undefined,{numeric:true}))
+    .map(r=>`<option value="${r.roomNumber}">${r.roomNumber} — ${r.tenantName||""}</option>`).join("");
+  document.getElementById("mp-tenant").value="";
+  document.getElementById("mp-amount").value="";
+  document.getElementById("mp-image").value="";
+  document.getElementById("mp-image-preview").style.display="none";
+  document.getElementById("mp-status").value="confirmed";
+  document.getElementById("mp-result").textContent="";
+  document.getElementById("manual-pay-modal").style.display="flex";
+}
+function closeManualPayModal(){document.getElementById("manual-pay-modal").style.display="none";}
+function onMpRoomChange(){
+  const roomNum=document.getElementById("mp-room").value;
+  const room=allRooms[roomNum];
+  document.getElementById("mp-tenant").value=room?.tenantName||"";
+  document.getElementById("mp-amount").value=room?.amount||"";
+}
+function onMpImageChange(input){
+  const file=input.files[0]; if(!file)return;
+  const preview=document.getElementById("mp-image-preview");
+  const img=document.getElementById("mp-preview-img");
+  const name=document.getElementById("mp-image-name");
+  const reader=new FileReader();
+  reader.onload=e=>{img.src=e.target.result;preview.style.display="block";name.textContent=file.name;};
+  reader.readAsDataURL(file);
+}
+async function saveManualPayment(){
+  const roomNum=document.getElementById("mp-room").value;
+  const amount=document.getElementById("mp-amount").value;
+  const status=document.getElementById("mp-status").value;
+  const result=document.getElementById("mp-result");
+  if(!roomNum){result.textContent="กรุณาเลือกห้อง";result.style.color="#b91c1c";return;}
+  if(!amount){result.textContent="กรุณาระบุยอดชำระ";result.style.color="#b91c1c";return;}
+  const btn=document.getElementById("mp-save-btn"); btn.disabled=true; btn.textContent="กำลังบันทึก…";
+  try{
+    const imageFile=document.getElementById("mp-image").files[0];
+    let imageBase64=null;
+    if(imageFile){
+      imageBase64=await new Promise((res,rej)=>{
+        const r=new FileReader(); r.onload=e=>res(e.target.result.split(",")[1]); r.onerror=rej; r.readAsDataURL(imageFile);
+      });
+    }
+    const room=allRooms[roomNum];
+    await api("/api/payments/manual",{method:"POST",body:JSON.stringify({
+      roomNumber:roomNum, tenantName:room?.tenantName||"", amount:Number(amount),
+      status, imageBase64
+    })});
+    result.textContent="✓ บันทึกสำเร็จ"; result.style.color="#15803d";
+    setTimeout(()=>{closeManualPayModal();loadPayments();loadRooms();},1200);
+  }catch(e){result.textContent="เกิดข้อผิดพลาด: "+e.message;result.style.color="#b91c1c";}
+  btn.disabled=false; btn.textContent="บันทึก";
+}
+
 function openLightbox(url){
   const lb=document.getElementById("lightbox");
   const img=document.getElementById("lightbox-img");
@@ -647,7 +785,56 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape")closeLightbox();});
 
 document.getElementById("token-input").addEventListener("keydown",e=>{if(e.key==="Enter")login();});
 </script>
-<!-- Lightbox รูปสลิป -->
+<!-- Modal เพิ่มการชำระเงินด้วยตนเอง -->
+<div class="modal-bg" id="manual-pay-modal">
+  <div class="modal-box" style="width:min(480px,95vw)">
+    <div class="modal-head">
+      <div><div class="modal-title">➕ เพิ่มการชำระเงิน</div><div style="font-size:12px;color:#64748b;margin-top:2px">บันทึกการชำระเงินด้วยตนเอง</div></div>
+      <button class="modal-close" onclick="closeManualPayModal()">×</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:5px;font-weight:500">ห้อง *</div>
+        <select id="mp-room" class="input" onchange="onMpRoomChange()">
+          <option value="">— เลือกห้อง —</option>
+        </select>
+      </div>
+      <div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:5px;font-weight:500">ชื่อผู้เช่า</div>
+        <input id="mp-tenant" class="input" type="text" placeholder="ดึงจากห้องอัตโนมัติ" readonly style="background:#f8fafc;color:#64748b">
+      </div>
+      <div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:5px;font-weight:500">ยอดที่ชำระ (฿) *</div>
+        <input id="mp-amount" class="input" type="number" placeholder="0.00" min="0" step="0.01">
+      </div>
+      <div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:5px;font-weight:500">รูปสลิป (ไม่บังคับ)</div>
+        <label class="upload-label" style="width:100%;justify-content:center">
+          📎 เลือกรูปสลิป
+          <input type="file" id="mp-image" accept="image/*" style="display:none" onchange="onMpImageChange(this)">
+        </label>
+        <div id="mp-image-preview" style="margin-top:8px;display:none">
+          <img id="mp-preview-img" style="max-width:100%;max-height:160px;border-radius:8px;border:1px solid #e2e8f0;object-fit:contain">
+          <div style="font-size:11px;color:#94a3b8;margin-top:4px" id="mp-image-name"></div>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:5px;font-weight:500">สถานะ</div>
+        <select id="mp-status" class="input">
+          <option value="confirmed">✅ ยืนยันแล้ว</option>
+          <option value="pending_review">⏳ รอตรวจสอบ</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px;align-items:center">
+      <button id="mp-save-btn" class="btn btn-primary" onclick="saveManualPayment()">บันทึก</button>
+      <button class="btn btn-ghost" onclick="closeManualPayModal()">ยกเลิก</button>
+      <span id="mp-result" style="font-size:12px;margin-left:4px"></span>
+    </div>
+  </div>
+</div>
+
+
 <div id="lightbox" onclick="closeLightbox()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;align-items:center;justify-content:center;cursor:zoom-out">
   <img id="lightbox-img" src="" style="max-width:92vw;max-height:92vh;border-radius:10px;object-fit:contain;box-shadow:0 8px 40px rgba(0,0,0,0.6)">
   <div onclick="closeLightbox()" style="position:absolute;top:16px;right:20px;color:white;font-size:32px;cursor:pointer;line-height:1;font-weight:300">×</div>
