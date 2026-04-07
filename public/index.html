@@ -438,7 +438,7 @@ function renderBillTable(paidRooms=new Set()){
     return `<tr style="${paid?"background:#f0fdf4":""}">
       <td><strong>${r.roomNumber}</strong></td>
       <td>${r.tenantName||"—"}</td>
-      <td style="text-align:right">${Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})}</td>
+      <td style="text-align:right">${r.invoiceLink?`<a href="${r.invoiceLink}" target="_blank" style="color:#0d9488;font-weight:700;text-decoration:none;border-bottom:1px dashed #0d9488">${Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})}</a>`:Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})}</td>
       <td>${r.lineUserId?'<span class="pill pill-green">มี LINE</span>':'<span class="pill pill-gray">ไม่มี</span>'}</td>
       <td>${paid
         ? '<span class="pill pill-green">✅ จ่ายแล้ว</span>'
