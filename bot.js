@@ -443,7 +443,12 @@ async function handleUserMessage(event) {
     return;
   }
 
-  if (user.state === "REGISTERED") {
+  // ถ้ามีห้องแล้ว (ไม่ว่า state จะเป็นอะไร) → ไม่ reset
+  if (user.roomNumber || user.state === "REGISTERED") {
+    if (user.state !== "REGISTERED") {
+      users[userId].state = "REGISTERED";
+      await saveUsers(users);
+    }
     await lineReply(event.replyToken, [{ type: "text", text: `คุณลงทะเบียนห้อง ${user.roomNumber} เรียบร้อยแล้วค่ะ\nหากต้องการเปลี่ยนห้อง พิมพ์ "เปลี่ยนห้อง" ได้เลยค่ะ` }]);
     return;
   }
@@ -822,17 +827,6 @@ app.post("/api/send-rent-one/:roomNumber", adminAuth, async (req, res) => {
   const amount = Number(room.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 });
   try { await linePush(room.lineUserId, [{ type: "text", text: `คุณมีค่าเช่าห้อง ${room.roomNumber} เดือนนี้จำนวน ${amount} บาท ชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล ดูรายละเอียดกดลิงค์นี้ ${room.invoiceLink}` }]); res.json({ ok: true }); }
   catch (e) { res.json({ ok: false, error: e.message }); }
-});
-app.post("/api/send-msg-one", adminAuth, async (req, res) => {
-  const { roomNumber, message } = req.body;
-  const rooms = await loadRooms();
-  const room = rooms[roomNumber];
-  if (!room) return res.json({ ok: false, error: "ไม่พบห้อง" });
-  if (!room.lineUserId) return res.json({ ok: false, error: "ไม่มี LINE ID" });
-  try {
-    await linePush(room.lineUserId, [{ type: "text", text: message }]);
-    res.json({ ok: true });
-  } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 app.post("/api/broadcast", adminAuth, async (req, res) => {
   const { message } = req.body; if (!message) return res.status(400).json({ error: "message required" });
