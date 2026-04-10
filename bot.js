@@ -443,12 +443,7 @@ async function handleUserMessage(event) {
     return;
   }
 
-  // ถ้ามีห้องแล้ว (ไม่ว่า state จะเป็นอะไร) → ไม่ reset
-  if (user.roomNumber || user.state === "REGISTERED") {
-    if (user.state !== "REGISTERED") {
-      users[userId].state = "REGISTERED";
-      await saveUsers(users);
-    }
+  if (user.state === "REGISTERED") {
     await lineReply(event.replyToken, [{ type: "text", text: `คุณลงทะเบียนห้อง ${user.roomNumber} เรียบร้อยแล้วค่ะ\nหากต้องการเปลี่ยนห้อง พิมพ์ "เปลี่ยนห้อง" ได้เลยค่ะ` }]);
     return;
   }
@@ -531,8 +526,15 @@ async function handlePostback(event) {
     const myRooms = Object.values(rooms).filter(r => r.lineUserId === userId);
     if (!myRooms.length) { await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนนะคะ" }]); return; }
     users[userId].state = "WAIT_SLIP"; await saveUsers(users);
-    const total = myRooms.reduce((s, r) => s + Number(r.amount), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 });
-    await lineReply(event.replyToken, [{ type: "text", text: `💳 ส่งหลักฐานการชำระเงินค่ะ\n\nยอดรวมที่ต้องชำระ: ${total} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน\n\nกรุณาถ่ายรูปหรืออัปโหลดสลิปการโอนเงินได้เลยค่ะ 👇` }]);
+    const baseAmount = myRooms.reduce((s, r) => s + Number(r.amount), 0);
+    // คำนวณค่าปรับตามวันที่ปัจจุบัน
+    const dayNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" })).getDate();
+    const overdueDays = dayNow > 7 ? dayNow - 7 : 0;
+    const fine = overdueDays * 100;
+    const totalAmount = baseAmount + fine;
+    const total = totalAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 });
+    const fineLine = fine > 0 ? `\nค่าปรับ (${overdueDays} วัน × 100): ${fine.toLocaleString("th-TH")} บาท` : "";
+    await lineReply(event.replyToken, [{ type: "text", text: `💳 ส่งหลักฐานการชำระเงินค่ะ\n\nยอดค่าเช่า: ${baseAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท${fineLine}\n──────────────────\nยอดรวมที่ต้องชำระ: ${total} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน\n\nกรุณาถ่ายรูปหรืออัปโหลดสลิปการโอนเงินได้เลยค่ะ 👇` }]);
     return;
   }
   if (data === "action=REQUEST_DOC") {
