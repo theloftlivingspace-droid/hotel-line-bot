@@ -438,7 +438,7 @@ function renderBillTable(paidRooms=new Set()){
     return `<tr style="${paid?"background:#f0fdf4":""}">
       <td><strong>${r.roomNumber}</strong></td>
       <td>${r.tenantName||"—"}</td>
-      <td style="text-align:right">${r.invoiceLink?`<a href="${r.invoiceLink}" target="_blank" style="color:#0d9488;font-weight:700;text-decoration:none;border-bottom:1px dashed #0d9488">${Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})}</a>`:Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})}</td>
+      <td style="text-align:right">${Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})}</td>
       <td>${r.lineUserId?'<span class="pill pill-green">มี LINE</span>':'<span class="pill pill-gray">ไม่มี</span>'}</td>
       <td>${paid
         ? '<span class="pill pill-green">✅ จ่ายแล้ว</span>'
@@ -553,14 +553,26 @@ async function loadPayments(){
                 ${p.slipAmount!=null ? Number(p.slipAmount).toLocaleString("th-TH",{minimumFractionDigits:2}) : "—"} <span style="font-size:14px;font-weight:500">บาท</span>
               </div>
             </div>
-            <!-- ยอดที่ต้องชำระ -->
-            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px;margin-bottom:10px">
+            <!-- ยอดที่ต้องชำระ (รวมค่าปรับตามวันรับสลิป) -->
+            ${(()=>{
+              const rcvDay = new Date(p.receivedAt).toLocaleString("en-US",{timeZone:"Asia/Bangkok",day:"numeric"});
+              const d = parseInt(rcvDay);
+              const overdue = d > 7 ? d - 7 : 0;
+              const fine = overdue * 100;
+              const expected = Number(p.expectedAmount) + fine;
+              const expectedStr = expected.toLocaleString("th-TH",{minimumFractionDigits:2});
+              const slipAmt = p.slipAmount != null ? Number(p.slipAmount) : null;
+              const match = slipAmt != null && Math.abs(slipAmt - expected) < 1;
+              const fineNote = fine > 0 ? `<div style="font-size:11px;color:#b45309;margin-top:2px">+ ค่าปรับ ${overdue} วัน × 100 = ${fine.toLocaleString("th-TH")} บาท</div>` : "";
+              return `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px;margin-bottom:10px">
               <div style="font-size:11px;color:#94a3b8;font-weight:600;margin-bottom:2px">ยอดที่ต้องชำระ</div>
-              <div style="font-size:16px;font-weight:700;color:#374151">${Number(p.expectedAmount).toLocaleString("th-TH",{minimumFractionDigits:2})} บาท</div>
-              ${p.amountMatch
+              <div style="font-size:16px;font-weight:700;color:#374151">${expectedStr} บาท</div>
+              ${fineNote}
+              ${match
                 ? `<div style="font-size:11px;color:#15803d;margin-top:3px">✓ ยอดตรงกัน</div>`
                 : `<div style="font-size:11px;color:#b91c1c;margin-top:3px">⚠ ยอดไม่ตรง</div>`}
-            </div>
+            </div>`;
+            })()}
             <!-- ข้อมูลเพิ่มเติม -->
             ${p.bankName||p.date ? `<div style="font-size:11px;color:#94a3b8;line-height:1.7">${p.bankName?`ธนาคาร: ${p.bankName}<br>`:""}${p.date?`วันที่: ${p.date}`:""}</div>` : ""}
             <!-- ปุ่ม action -->
