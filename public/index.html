@@ -212,11 +212,46 @@ textarea.input{resize:vertical;line-height:1.7}
         <div class="panel-head">
           <span>ห้องทั้งหมด</span>
           <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="openAddRoomModal()">+ เพิ่มห้อง</button>
             <button class="btn btn-ghost btn-sm" onclick="exportCsv()">Export CSV ↓</button>
             <button class="btn btn-sm" style="background:#7c3aed;color:#fff;border:none" onclick="setRichMenuAll()">ตั้ง Rich Menu</button>
             <button class="btn btn-ghost btn-sm" onclick="loadRooms()">รีเฟรช</button>
           </div>
         </div>
+
+<!-- Modal เพิ่มห้อง -->
+<div id="add-room-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;padding:24px;width:420px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
+    <div style="font-weight:700;font-size:16px;margin-bottom:16px">➕ เพิ่มห้องใหม่</div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:4px">เลขห้อง *</div>
+        <input id="new-room-number" class="input" placeholder="เช่น 303" type="text">
+      </div>
+      <div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:4px">ชื่อผู้เช่า *</div>
+        <input id="new-room-tenant" class="input" placeholder="ชื่อ-นามสกุล" type="text">
+      </div>
+      <div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:4px">ยอดค่าเช่า (฿) *</div>
+        <input id="new-room-amount" class="input" placeholder="เช่น 3500" type="number">
+      </div>
+      <div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:4px">ลิงก์ใบแจ้งหนี้</div>
+        <input id="new-room-invoice" class="input" placeholder="https://aprty.co/i/..." type="text">
+      </div>
+      <div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:4px">LINE User ID (ถ้ามี)</div>
+        <input id="new-room-lineid" class="input" placeholder="Uxxxxxxxxxxxxxxxxx" type="text">
+      </div>
+      <div id="add-room-error" style="color:#b91c1c;font-size:12px;display:none"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:20px;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="closeAddRoomModal()">ยกเลิก</button>
+      <button class="btn btn-primary" onclick="submitAddRoom()">บันทึก</button>
+    </div>
+  </div>
+</div>
         <div style="padding:8px 16px 0">
           <input type="text" id="search" class="input" style="max-width:320px" placeholder="🔍 ค้นหาห้อง / ชื่อ / LINE ID…" oninput="filterRooms()">
         </div>
@@ -505,6 +540,32 @@ async function setRichMenuAll(){
   catch(e){alert("เกิดข้อผิดพลาด: "+e.message);}
 }
 async function exportCsv(){window.open(`/api/rooms.csv?token=${TOKEN}`,"_blank");}
+
+function openAddRoomModal(){
+  ["new-room-number","new-room-tenant","new-room-amount","new-room-invoice","new-room-lineid"].forEach(id=>{document.getElementById(id).value="";});
+  document.getElementById("add-room-error").style.display="none";
+  document.getElementById("add-room-modal").style.display="flex";
+}
+function closeAddRoomModal(){ document.getElementById("add-room-modal").style.display="none"; }
+
+async function submitAddRoom(){
+  const roomNumber = document.getElementById("new-room-number").value.trim();
+  const tenantName = document.getElementById("new-room-tenant").value.trim();
+  const amount     = Number(document.getElementById("new-room-amount").value);
+  const invoiceLink= document.getElementById("new-room-invoice").value.trim();
+  const lineUserId = document.getElementById("new-room-lineid").value.trim();
+  const errEl      = document.getElementById("add-room-error");
+
+  if(!roomNumber||!tenantName||!amount){ errEl.textContent="กรุณากรอกเลขห้อง ชื่อผู้เช่า และยอดค่าเช่า"; errEl.style.display="block"; return; }
+  if(allRooms[roomNumber]){ errEl.textContent=`ห้อง ${roomNumber} มีอยู่แล้วในระบบ`; errEl.style.display="block"; return; }
+
+  try{
+    await api(`/api/rooms/${roomNumber}`,{method:"PATCH",body:JSON.stringify({tenantName,amount,invoiceLink,lineUserId})});
+    closeAddRoomModal();
+    await loadRooms();
+    alert(`✅ เพิ่มห้อง ${roomNumber} สำเร็จ`);
+  }catch(e){ errEl.textContent="เกิดข้อผิดพลาด: "+e.message; errEl.style.display="block"; }
+}
 
 async function loadPayments(){
   try{
