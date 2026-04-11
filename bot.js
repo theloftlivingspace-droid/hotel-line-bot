@@ -720,7 +720,10 @@ app.get("/api/rooms.csv", adminAuth, async (req, res) => {
 app.get("/api/users", adminAuth, async (req, res) => { res.json(await loadUsers()); });
 app.patch("/api/rooms/:roomNumber", adminAuth, async (req, res) => {
   const rooms = await loadRooms();
-  if (!rooms[req.params.roomNumber]) return res.status(404).json({ error: "Room not found" });
+  // ถ้าห้องไม่มี → สร้างใหม่ (upsert)
+  if (!rooms[req.params.roomNumber]) {
+    rooms[req.params.roomNumber] = { roomNumber: req.params.roomNumber, tenantName: "", amount: 0, invoiceLink: "", lineUserId: "" };
+  }
   ["tenantName", "lineUserId", "amount", "invoiceLink"].forEach(k => { if (req.body[k] !== undefined) rooms[req.params.roomNumber][k] = req.body[k]; });
   await saveRooms(rooms); res.json(rooms[req.params.roomNumber]);
 });
