@@ -495,20 +495,31 @@ async function handlePostback(event) {
   if (data === "action=CHECK_RENT") {
     const myRooms = Object.values(rooms).filter(r => r.lineUserId === userId);
     if (!myRooms.length) { await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนนะคะ" }]); return; }
+    const roomNums = myRooms.map(r => r.roomNumber);
+    const { confirmed, fine, confirmedAmount } = await getPaymentStatus(roomNums);
+    const overdueDays = fine / 100;
+    const fineNote = fine > 0 ? `\nค่าปรับ (${overdueDays} วัน × 100): ${fine.toLocaleString("th-TH")} บาท` : "";
     if (myRooms.length === 1) {
       const r = myRooms[0];
+      const baseAmount = Number(r.amount);
+      const total = confirmed
+        ? (confirmedAmount || (baseAmount + fine))
+        : baseAmount + fine;
+      const totalStr = total.toLocaleString("th-TH", { minimumFractionDigits: 2 });
+      const paidNote = confirmed ? `\n✅ ชำระแล้ว: ${totalStr} บาท` : "";
       await lineReply(event.replyToken, [
-        { type: "text", text: `📋 ข้อมูลค่าเช่าห้อง ${r.roomNumber} ค่ะ\n\nยอดค่าเช่าเดือนนี้: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` },
+        { type: "text", text: `📋 ข้อมูลค่าเช่าห้อง ${r.roomNumber} ค่ะ\n\nยอดค่าเช่าเดือนนี้: ${baseAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท${fineNote}${paidNote}${!confirmed ? `\n──────────────────\nยอดรวมที่ต้องชำระ: ${totalStr} บาท` : ""}\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` },
         { type: "flex", altText: `ใบแจ้งหนี้ห้อง ${r.roomNumber}`, contents: {
           type: "bubble",
           header: { type:"box", layout:"vertical", backgroundColor:"#0d9488", contents:[{type:"text", text:`ห้อง ${r.roomNumber}`, color:"#ffffff", weight:"bold", size:"md"}] },
-          body:   { type:"box", layout:"vertical", contents:[{type:"text", text:`ยอด: ${Number(r.amount).toLocaleString("th-TH",{minimumFractionDigits:2})} บาท`, size:"sm", color:"#333333"}] },
+          body:   { type:"box", layout:"vertical", contents:[{type:"text", text:`ยอดรวม: ${totalStr} บาท`, size:"sm", color:"#333333"}] },
           footer: { type:"box", layout:"vertical", contents:[{type:"button", style:"primary", color:"#0d9488", action:{type:"uri", label:"ดูใบแจ้งหนี้", uri: r.invoiceLink}}] },
         }},
       ]);
     } else {
+      const baseTotal = myRooms.reduce((s, r) => s + Number(r.amount), 0);
+      const grandTotal = baseTotal + fine;
       const summary = myRooms.map(r => `🏠 ห้อง ${r.roomNumber}: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`).join("\n");
-      const total = myRooms.reduce((s, r) => s + Number(r.amount), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 });
       const billBubbles = myRooms.map(r => ({
         type: "bubble", size: "kilo",
         header: { type: "box", layout: "vertical", backgroundColor: "#0d9488", contents: [{ type: "text", text: `ห้อง ${r.roomNumber}`, color: "#ffffff", weight: "bold", size: "md" }] },
@@ -516,7 +527,7 @@ async function handlePostback(event) {
         footer: { type: "box", layout: "vertical", contents: [{ type: "button", style: "primary", color: "#0d9488", action: { type: "uri", label: "ดูใบแจ้งหนี้", uri: r.invoiceLink } }] },
       }));
       await lineReply(event.replyToken, [
-        { type: "text", text: `📋 ข้อมูลค่าเช่าทุกห้องของคุณค่ะ\n\n${summary}\n\nรวมทั้งหมด: ${total} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` },
+        { type: "text", text: `📋 ข้อมูลค่าเช่าทุกห้องของคุณค่ะ\n\n${summary}${fineNote}\n──────────────────\nยอดรวมที่ต้องชำระ: ${grandTotal.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน` },
         { type: "flex", altText: "ใบแจ้งหนี้ทุกห้อง", contents: { type: "carousel", contents: billBubbles } },
       ]);
     }
@@ -527,14 +538,14 @@ async function handlePostback(event) {
     if (!myRooms.length) { await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนนะคะ" }]); return; }
     users[userId].state = "WAIT_SLIP"; await saveUsers(users);
     const baseAmount = myRooms.reduce((s, r) => s + Number(r.amount), 0);
-    // คำนวณค่าปรับตามวันที่ปัจจุบัน
-    const dayNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" })).getDate();
-    const overdueDays = dayNow > 7 ? dayNow - 7 : 0;
-    const fine = overdueDays * 100;
+    const { confirmed: slipConfirmed, fine, confirmedAmount: slipConfirmedAmount } = await getPaymentStatus(myRooms.map(r => r.roomNumber));
+    const overdueDays = fine / 100;
     const totalAmount = baseAmount + fine;
+    const totalAmount = slipConfirmed ? (slipConfirmedAmount || baseAmount + fine) : baseAmount + fine;
     const total = totalAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 });
     const fineLine = fine > 0 ? `\nค่าปรับ (${overdueDays} วัน × 100): ${fine.toLocaleString("th-TH")} บาท` : "";
-    await lineReply(event.replyToken, [{ type: "text", text: `💳 ส่งหลักฐานการชำระเงินค่ะ\n\nยอดค่าเช่า: ${baseAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท${fineLine}\n──────────────────\nยอดรวมที่ต้องชำระ: ${total} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน\n\nกรุณาถ่ายรูปหรืออัปโหลดสลิปการโอนเงินได้เลยค่ะ 👇` }]);
+    const paidLine = slipConfirmed ? `\n✅ ชำระแล้ว: ${total} บาท` : `\n──────────────────\nยอดรวมที่ต้องชำระ: ${total} บาท`;
+    await lineReply(event.replyToken, [{ type: "text", text: `💳 ส่งหลักฐานการชำระเงินค่ะ\n\nยอดค่าเช่า: ${baseAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท${fineLine}${paidLine}\nกำหนดชำระ: วันที่ 7 ของทุกเดือน\n\nกรุณาถ่ายรูปหรืออัปโหลดสลิปการโอนเงินได้เลยค่ะ 👇` }]);
     return;
   }
   if (data === "action=REQUEST_DOC") {
@@ -563,6 +574,26 @@ function getBillingCycle(now=new Date()){
   start.setHours(0,0,0,0);
   end.setHours(23,59,59,999);
   return { start, end };
+}
+
+async function getPaymentStatus(roomNumbers) {
+  const dayNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" })).getDate();
+  const payments = await loadPayments();
+  const { start, end } = getBillingCycle();
+  const endOfCycle = new Date(end); endOfCycle.setHours(23,59,59,999);
+  // หา confirmed payment ในรอบนี้
+  const confirmedPayment = payments.find(p => {
+    if (p.status !== "confirmed") return false;
+    const d = new Date(p.receivedAt);
+    if (d < start || d > endOfCycle) return false;
+    const paidRooms = p.roomNumber.split(",").map(r => r.trim());
+    return roomNumbers.some(rn => paidRooms.includes(rn));
+  });
+  if (confirmedPayment) {
+    return { confirmed: true, fine: 0, confirmedAmount: confirmedPayment.slipAmount || null };
+  }
+  const overdueDays = dayNow > 7 ? dayNow - 7 : 0;
+  return { confirmed: false, fine: overdueDays * 100, confirmedAmount: null };
 }
 
 async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
