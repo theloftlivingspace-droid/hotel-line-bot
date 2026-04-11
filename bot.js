@@ -540,7 +540,6 @@ async function handlePostback(event) {
     const baseAmount = myRooms.reduce((s, r) => s + Number(r.amount), 0);
     const { confirmed: slipConfirmed, fine, confirmedAmount: slipConfirmedAmount } = await getPaymentStatus(myRooms.map(r => r.roomNumber));
     const overdueDays = fine / 100;
-    const totalAmount = baseAmount + fine;
     const totalAmount = slipConfirmed ? (slipConfirmedAmount || baseAmount + fine) : baseAmount + fine;
     const total = totalAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 });
     const fineLine = fine > 0 ? `\nค่าปรับ (${overdueDays} วัน × 100): ${fine.toLocaleString("th-TH")} บาท` : "";
