@@ -122,7 +122,7 @@ async function addPendingRow(sheets, res) {
 async function updateRoomInSheet(sheets, resId, roomNumber) {
   const result = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:F",
+    range: SHEET_NAME + "!A:G",
   });
   const rows = result.data.values || [];
   for (let i = 1; i < rows.length; i++) {
