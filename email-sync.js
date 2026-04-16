@@ -254,7 +254,7 @@ function parseEmail(email) {
   const prefix    = /airbnb/i.test(channel)     ? "ABB" :
                     /booking/i.test(channel)     ? "BKC" :
                     /expedia/i.test(channel)     ? "EXP" :
-                    /trip\.com/i.test(channel)  ? "TRP" : "OTH";
+                    /trip/i.test(channel)        ? "TRP" : "OTH";
   const resId     = codeMatch ? codeMatch[0] : (prefix + "-" + guestKey + "-" + checkIn.replace(/-/g, ""));
 
   console.log("parse OK: " + resId + " | " + m[1].trim() + " | " + channel + " | " + checkIn + " -> " + checkOut);
