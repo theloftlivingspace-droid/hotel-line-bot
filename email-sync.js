@@ -122,7 +122,7 @@ async function addPendingRow(sheets, res) {
 async function updateRoomInSheet(sheets, resId, roomNumber) {
   const result = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:F",
+    range: SHEET_NAME + "!A:G",
   });
   const rows = result.data.values || [];
   for (let i = 1; i < rows.length; i++) {
@@ -254,7 +254,7 @@ function parseEmail(email) {
   const prefix    = /airbnb/i.test(channel)     ? "ABB" :
                     /booking/i.test(channel)     ? "BKC" :
                     /expedia/i.test(channel)     ? "EXP" :
-                    /trip/i.test(channel)        ? "TRP" : "OTH";
+                    /trip\.com/i.test(channel)  ? "TRP" : "OTH";
   const resId     = codeMatch ? codeMatch[0] : (prefix + "-" + guestKey + "-" + checkIn.replace(/-/g, ""));
 
   console.log("parse OK: " + resId + " | " + m[1].trim() + " | " + channel + " | " + checkIn + " -> " + checkOut);
