@@ -143,11 +143,17 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
 // ส่ง LINE
 // ─────────────────────────────────────────────
 async function linePush(to, text) {
-  await axios.post(
-    "https://api.line.me/v2/bot/message/push",
-    { to, messages: [{ type: "text", text }] },
-    { headers: { Authorization: "Bearer " + LINE_TOKEN, "Content-Type": "application/json" } }
-  );
+  try {
+    const res = await axios.post(
+      "https://api.line.me/v2/bot/message/push",
+      { to, messages: [{ type: "text", text }] },
+      { headers: { Authorization: "Bearer " + LINE_TOKEN, "Content-Type": "application/json" } }
+    );
+    console.log("[linePush] OK to=" + to.slice(0,10) + "... status=" + res.status);
+  } catch (e) {
+    const body = e.response?.data ? JSON.stringify(e.response.data) : e.message;
+    console.error("[linePush] FAIL to=" + to + " error=" + body);
+  }
 }
 
 async function sendNewBookingToAdmin(res, roomLabel) {
