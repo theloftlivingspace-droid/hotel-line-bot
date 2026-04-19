@@ -683,7 +683,7 @@ app.post("/webhook", (req, res) => {
           if (event.type === "postback") { await handlePostback(event); return; }
           if (event.type === "message") {
             const uid = event.source?.userId || "";
-            console.log(`[Webhook] type=${event.type} source=${event.source?.type} userId=${uid}`);
+            console.log(`[Webhook] type=${event.type} source=${event.source?.type} userId=${uid} groupId=${event.source?.groupId||"-"} LINE_GROUP=${LINE_GROUP}`);
             if (isUser && event.message.type === "text") {
               // ถ้าเป็นแอดมิน → จัดการ hotel เท่านั้น ไม่ส่งไป apartment
               if (ADMIN_USER && event.source.userId === ADMIN_USER) {
