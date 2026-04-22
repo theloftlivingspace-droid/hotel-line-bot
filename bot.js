@@ -418,6 +418,18 @@ async function handleUserMessage(event) {
     return;
   }
 
+  // ─── จับ keyword ย้ายออก ทุก state (ถ้ามีห้องแล้ว) ────────────
+  const isMoveout = user.roomNumber && (
+    text.includes("ย้ายออก") ||
+    text.includes("สิ้นสัญญา") ||
+    (/ออก/.test(text) && /สิ้นเดือน|เดือน|วันที่|\d/.test(text))
+  );
+  if (isMoveout && user.state !== "WAIT_MOVEOUT_DATE") {
+    users[userId].state = "WAIT_MOVEOUT_DATE"; await saveUsers(users);
+    await lineReply(event.replyToken, [{ type: "text", text: `📦 แจ้งย้ายออกห้อง ${user.roomNumber} ค่ะ\n\nกรุณาระบุวันที่ต้องการย้ายออกค่ะ\nเช่น: ย้ายออกวันที่ 31 พฤษภาคม 2569\n\nพิมพ์รายละเอียดได้เลยค่ะ 👇` }]);
+    return;
+  }
+
   if (user.state === "WAIT_DOC_REQUEST") {
     users[userId].state = "REGISTERED"; await saveUsers(users);
     const roomNum = user.roomNumber || "ไม่ระบุ";
@@ -425,11 +437,6 @@ async function handleUserMessage(event) {
     return;
   }
   if (user.state === "WAIT_CONTACT_MSG") {
-    if (text === "แจ้งย้ายออก" || text.includes("ย้ายออก")) {
-      users[userId].state = "WAIT_MOVEOUT_DATE"; await saveUsers(users);
-      await lineReply(event.replyToken, [{ type: "text", text: `📦 แจ้งย้ายออกห้อง ${user.roomNumber || "ไม่ระบุ"} ค่ะ\n\nกรุณาระบุวันที่ต้องการย้ายออกค่ะ\nเช่น: ย้ายออกวันที่ 31 พฤษภาคม 2569\n\nพิมพ์รายละเอียดได้เลยค่ะ 👇` }]);
-      return;
-    }
     users[userId].state = "REGISTERED"; await saveUsers(users);
     const roomNum = user.roomNumber || "ไม่ระบุ";
     await lineReply(event.replyToken, [{ type: "text", text: `✅ รับเรื่องแล้วค่ะ\n\nห้อง: ${roomNum}\nเรื่อง: ${text}\n\nเจ้าหน้าที่จะติดต่อกลับโดยเร็วที่สุดค่ะ 😊` }]);
@@ -444,11 +451,10 @@ async function handleUserMessage(event) {
   }
 
   if (user.state === "REGISTERED") {
-    await lineReply(event.replyToken, [{ type: "text", text: `คุณลงทะเบียนห้อง ${user.roomNumber} เรียบร้อยแล้วค่ะ\nหากต้องการเปลี่ยนห้อง พิมพ์ "เปลี่ยนห้อง" ได้เลยค่ะ` }]);
+    // ไม่ reset state — แค่แจ้งว่าไม่เข้าใจข้อความ
+    await lineReply(event.replyToken, [{ type: "text", text: `ขออภัยค่ะ ไม่เข้าใจข้อความนี้\n\nกรุณาใช้เมนูด้านล่าง หรือพิมพ์:\n• "เปลี่ยนห้อง" — เปลี่ยนห้องลงทะเบียน\n• "ย้ายออก" — แจ้งย้ายออก` }]);
     return;
   }
-  users[userId].state = "WAIT_FLOOR"; await saveUsers(users);
-  await lineReply(event.replyToken, [{ type: "text", text: "กรุณาเลือกชั้นของคุณค่ะ" }, floorButtons(rooms)]);
 }
 
 async function handleImageMessage(event) {
