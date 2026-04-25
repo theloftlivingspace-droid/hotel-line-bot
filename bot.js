@@ -48,6 +48,41 @@ async function linePush(to, messages) {
     body: JSON.stringify({ to, messages }),
   });
 }
+// ─── QuotaGuard ─────────────────────────────────────────────────
+const QUOTA_KEY = "line_push_count";
+const QUOTA_MAX = 280; // เตือนก่อนถึง 300
+async function getPushCount() { return parseInt((await redisGet(QUOTA_KEY)) || "0"); }
+async function incrementPush() {
+  const n = await getPushCount() + 1;
+  await redisSet(QUOTA_KEY, n);
+  if (n >= QUOTA_MAX && n % 10 === 0) {
+    console.warn(`[QuotaGuard] ⚠️ LINE Push ใช้ไปแล้ว ${n}/300`);
+  }
+  return n;
+}
+async function safeLinePush(to, messages) {
+  const count = await getPushCount();
+  if (count >= 300) {
+    console.error("[QuotaGuard] ❌ หมดโควต้า 300 ข้อความ ไม่ส่ง push");
+    return false;
+  }
+  try {
+    await linePush(to, messages);
+    const n = await incrementPush();
+    console.log(`[QuotaGuard] push #${n}/300`);
+    return true;
+  } catch (e) { console.error("[safeLinePush]", e.message); return false; }
+}
+// reset ต้นเดือน
+async function resetMonthlyQuota() {
+  const bkk = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+  if (bkk.getDate() === 1 && bkk.getHours() === 0) {
+    await redisSet(QUOTA_KEY, 0);
+    console.log("[QuotaGuard] reset quota เดือนใหม่");
+  }
+}
+cron.schedule("0 0 * * *", resetMonthlyQuota, { timezone: "Asia/Bangkok" });
+
 async function lineReply(replyToken, messages) {
   await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
@@ -231,11 +266,11 @@ async function runHotelJob() {
     const rows = await fetchSheetData();
     const { checkIns, checkOuts } = filterByDate(rows, tomorrow);
     const msg = buildHotelMessage(checkIns, checkOuts, tomorrow);
-    await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    await safeLinePush(LINE_GROUP, [{ type: "text", text: msg }]);
     console.log("ส่ง LINE สำเร็จ");
   } catch (err) {
     console.error("Hotel job error: " + err.message);
-    try { await linePush(LINE_GROUP, [{ type: "text", text: "⚠️ ระบบแจ้งเตือนแม่บ้านขัดข้อง\n" + err.message }]); } catch (_) {}
+    try { await safeLinePush(LINE_GROUP, [{ type: "text", text: "⚠️ ระบบแจ้งเตือนแม่บ้านขัดข้อง\n" + err.message }]); } catch (_) {}
   }
 }
 
@@ -318,7 +353,7 @@ async function verifySlipWithAI(base64Image, expectedAmount) {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
-      model: "claude-opus-4-6", max_tokens: 300,
+      model: "claude-haiku-4-5-20251001", max_tokens: 300,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64Image } },
         { type: "text", text: `สลิปโอนเงิน ตอบ JSON เท่านั้น:\n{"isSlip":bool,"amount":number_or_null,"bankName":"string","toAccount":"string","date":"string"}\nยอดที่คาดหวัง: ${expectedAmount} บาท` },
@@ -483,11 +518,11 @@ async function handleImageMessage(event) {
     const payments = await loadPayments(); payments.unshift(payment); await savePayments(payments.slice(0, 200));
 
     const replyText = `✅ ได้รับรูปภาพแล้วค่ะ\n\n🏠 ห้อง: ${roomList}\n\nเจ้าหน้าที่จะดำเนินการและแจ้งให้ทราบโดยเร็วที่สุดค่ะ 😊`;
-    await linePush(userId, [{ type: "text", text: replyText }]);
+    await safeLinePush(userId, [{ type: "text", text: replyText }]);
     console.log(`[Slip] ห้อง ${roomList} - รับสลิปแล้ว id=${paymentId}`);
   } catch (e) {
     console.error("[Slip Error]", e.message);
-    await linePush(userId, [{ type: "text", text: "เกิดข้อผิดพลาด กรุณาลองใหม่หรือติดต่อเจ้าหน้าที่ค่ะ" }]);
+    await safeLinePush(userId, [{ type: "text", text: "เกิดข้อผิดพลาด กรุณาลองใหม่หรือติดต่อเจ้าหน้าที่ค่ะ" }]);
   }
 }
 
@@ -635,7 +670,7 @@ async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
         }
       }
       if (msg) {
-        try { await linePush(room.lineUserId, [{ type: "text", text: msg }]); console.log(`[Reminder] ส่งเตือนห้อง ${room.roomNumber} วันที่ ${day}`); }
+        try { await safeLinePush(room.lineUserId, [{ type: "text", text: msg }]); console.log(`[Reminder] ส่งเตือนห้อง ${room.roomNumber} วันที่ ${day}`); }
         catch (e) { console.error(`[Reminder] ส่งไม่สำเร็จห้อง ${room.roomNumber}:`, e.message); }
         await new Promise(r => setTimeout(r, 500));
       }
@@ -854,7 +889,7 @@ app.post("/api/send-rent", adminAuth, async (req, res) => {
       const bubbles = userRooms.map(r => ({ type: "bubble", size: "kilo", header: { type: "box", layout: "vertical", backgroundColor: "#0d9488", contents: [{ type: "text", text: `ห้อง ${r.roomNumber}`, color: "#ffffff", weight: "bold", size: "md" }] }, body: { type: "box", layout: "vertical", contents: [{ type: "text", text: `ยอด: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`, size: "sm" }] }, footer: { type: "box", layout: "vertical", contents: [{ type: "button", style: "primary", color: "#0d9488", action: { type: "uri", label: "ดูใบแจ้งหนี้", uri: r.invoiceLink } }] } }));
       messages = [{ type: "text", text: `คุณมีค่าเช่าเดือนนี้ดังนี้ค่ะ\n\n${summary}\n\nรวมทั้งหมด: ${total.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท\nชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล` }, { type: "flex", altText: "ใบแจ้งหนี้ทุกห้อง", contents: { type: "carousel", contents: bubbles } }];
     }
-    try { await linePush(userId, messages); ok += userRooms.length; } catch (e) { fail += userRooms.length; userRooms.forEach(r => errors.push({ room: r.roomNumber, error: e.message })); }
+    try { await safeLinePush(userId, messages); ok += userRooms.length; } catch (e) { fail += userRooms.length; userRooms.forEach(r => errors.push({ room: r.roomNumber, error: e.message })); }
     await new Promise(r => setTimeout(r, 250));
   }
   const skipped = Object.values(rooms).filter(r => !r.lineUserId).length;
@@ -866,14 +901,14 @@ app.post("/api/send-rent-one/:roomNumber", adminAuth, async (req, res) => {
   if (!room) return res.json({ ok: false, error: "ไม่พบห้อง" });
   if (!room.lineUserId) return res.json({ ok: false, error: "ไม่มี LINE ID" });
   const amount = Number(room.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 });
-  try { await linePush(room.lineUserId, [{ type: "text", text: `คุณมีค่าเช่าห้อง ${room.roomNumber} เดือนนี้จำนวน ${amount} บาท ชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล ดูรายละเอียดกดลิงค์นี้ ${room.invoiceLink}` }]); res.json({ ok: true }); }
+  try { await safeLinePush(room.lineUserId, [{ type: "text", text: `คุณมีค่าเช่าห้อง ${room.roomNumber} เดือนนี้จำนวน ${amount} บาท ชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล ดูรายละเอียดกดลิงค์นี้ ${room.invoiceLink}` }]); res.json({ ok: true }); }
   catch (e) { res.json({ ok: false, error: e.message }); }
 });
 app.post("/api/broadcast", adminAuth, async (req, res) => {
   const { message } = req.body; if (!message) return res.status(400).json({ error: "message required" });
   const targets = Object.values(await loadRooms()).filter(r => r.lineUserId);
   let ok = 0, fail = 0;
-  for (const room of targets) { try { await linePush(room.lineUserId, [{ type: "text", text: message }]); ok++; } catch { fail++; } await new Promise(r => setTimeout(r, 250)); }
+  for (const room of targets) { try { await safeLinePush(room.lineUserId, [{ type: "text", text: message }]); ok++; } catch { fail++; } await new Promise(r => setTimeout(r, 250)); }
   res.json({ ok, fail, total: targets.length });
 });
 app.post("/api/collect-followers", adminAuth, async (req, res) => {
@@ -887,7 +922,7 @@ app.post("/api/collect-followers", adminAuth, async (req, res) => {
     for (const userId of need) {
       if (!users[userId]) { let displayName = "-"; try { const p = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, { headers: { Authorization: `Bearer ${LINE_TOKEN}` } }); if (p.ok) ({ displayName } = await p.json()); } catch {} users[userId] = { userId, displayName, state: "WAIT_FLOOR", roomNumber: null, pendingRoom: null, registeredAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; }
       else { users[userId].state = "WAIT_FLOOR"; users[userId].pendingRoom = null; users[userId].updatedAt = new Date().toISOString(); }
-      try { await linePush(userId, [{ type: "text", text: REGISTER_MSG }, floorButtons(rooms)]); sent++; } catch { fail++; }
+      try { await safeLinePush(userId, [{ type: "text", text: REGISTER_MSG }, floorButtons(rooms)]); sent++; } catch { fail++; }
       await new Promise(r => setTimeout(r, 250));
     }
     await saveUsers(users); res.json({ total: allIds.length, already: allIds.length - need.length, sent, failed: fail });
@@ -945,6 +980,12 @@ startWebhookServer();
 cron.schedule(CRON_SCHED, runHotelJob, { timezone: "Asia/Bangkok" });
 // Rent reminder เช็คทุกชั่วโมง
 cron.schedule("0 9 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });
+
+// ─── Quota status endpoint ──────────────────────────────────────
+app.get("/api/quota", adminAuth, async (req, res) => {
+  const count = await getPushCount();
+  res.json({ used: count, remaining: 300 - count, max: 300 });
+});
 
 if (process.argv.includes("--test")) { console.log("โหมดทดสอบ..."); runHotelJob(); }
 if (process.argv.includes("--sync")) { console.log("sync email ทันที..."); syncEmails(); }
