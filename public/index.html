@@ -354,15 +354,10 @@ let TOKEN="",allRooms={};
 
 function getBillingCycle(now=new Date()){
   const y=now.getFullYear(),m=now.getMonth();
-  const lastOfCurrent=new Date(y,m+1,0);
-  const isLastDay=now.getDate()===lastOfCurrent.getDate();
-  if(isLastDay){
-    const lastOfNext=new Date(y,m+2,0);
-    return{start:lastOfCurrent,end:new Date(lastOfNext-86400000)};
-  }else{
-    const lastOfPrev=new Date(y,m,0);
-    return{start:lastOfPrev,end:new Date(lastOfCurrent-86400000)};
-  }
+  // start = วันที่ 1, end = วันที่ 7 เดือนถัดไป - 8 วัน
+  const start=new Date(y,m,1,0,0,0,0);
+  const end=new Date(y,m+1,-1,23,59,59,999); // = วันที่ 29/30 ของเดือนนี้
+  return{start,end};
 }
 
 async function api(path,opts={}){
@@ -425,12 +420,11 @@ async function loadRooms(){
   try {
     const now=new Date();
     const {start,end}=getBillingCycle(now);
-    const endOfCycle=new Date(end); endOfCycle.setHours(23,59,59,999);
     const payments=await api("/api/payments");
     const confirmedThisMonth=payments.filter(p=>{
       if(p.status!=="confirmed")return false;
       const d=new Date(p.updatedAt||p.receivedAt);
-      return d>=start && d<=endOfCycle;
+      return d>=start && d<=end;
     });
     const fmt=d=>d.toLocaleDateString("th-TH",{day:"numeric",month:"short"});
     const lbl=document.getElementById("s-cycle-label");
