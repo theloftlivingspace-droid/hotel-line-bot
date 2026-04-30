@@ -374,6 +374,10 @@ function closeSidebar(){
   document.getElementById("sidebar-overlay").classList.remove("open");
 }
 
+function checkSendAllStatus(){
+  const now=new Date(), key=`sent_bills_${now.getFullYear()}_${now.getMonth()}`;
+  if(localStorage.getItem(key)) lockSendAllBtn();
+}
 function showPage(name){
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach(n=>n.classList.remove("active"));
@@ -384,7 +388,7 @@ function showPage(name){
   if(name==="payments")loadPayments();
   if(name==="moveout")loadMoveouts();
   if(name==="history"){loadBillHistory();loadLogs();}
-  if(name==="bills"){ loadRooms(); }
+  if(name==="bills"){ loadRooms(); checkSendAllStatus(); }
 }
 
 async function login(){
@@ -506,18 +510,37 @@ async function uploadInvoice(input){
 async function sendAllBills(){
   const rooms=Object.values(allRooms).filter(r=>r.lineUserId);
   if(!rooms.length){alert("ยังไม่มีห้องที่ลงทะเบียน LINE ค่ะ");return;}
-  if(!confirm(`ส่งบิลไปยัง ${rooms.length} ห้องที่ลงทะเบียนแล้ว?`))return;
+  if(!confirm(`ส่งบิลไปยัง ${rooms.length} ห้องที่ลงทะเบียนแล้ว?
+(กดได้ครั้งเดียวต่อเดือน)`))return;
   const btn=document.getElementById("send-all-btn"),result=document.getElementById("bill-result"),progress=document.getElementById("bill-progress");
   btn.disabled=true; btn.textContent="กำลังส่ง…"; result.textContent=""; progress.classList.remove("hidden");
   try{
     const r=await api("/api/send-rent",{method:"POST",body:JSON.stringify({})});
+    if(!r.ok && r.error){
+      result.textContent="⚠️ "+r.error;
+      result.style.color="#b45309";
+      lockSendAllBtn();
+      setTimeout(()=>progress.classList.add("hidden"),3000);
+      return;
+    }
     document.getElementById("bill-progress-text").textContent=`${r.ok}/${r.ok+r.failed}`;
     result.textContent=`✓ ส่งสำเร็จ ${r.ok} ห้อง${r.failed>0?` · ✗ ล้มเหลว ${r.failed} ห้อง`:""}`;
     result.style.color=r.failed>0?"#b91c1c":"#15803d";
-  }catch(e){result.textContent="เกิดข้อผิดพลาด: "+e.message;result.style.color="#b91c1c";}
-  btn.disabled=false; btn.textContent="📤 ส่งบิลทุกห้อง";
+    const now2=new Date(), key2=`sent_bills_${now2.getFullYear()}_${now2.getMonth()}`;
+    localStorage.setItem(key2,"1");
+    lockSendAllBtn();
+  }catch(e){
+    result.textContent="เกิดข้อผิดพลาด: "+e.message; result.style.color="#b91c1c";
+    btn.disabled=false; btn.textContent="📤 ส่งบิลทุกห้อง";
+  }
   setTimeout(()=>progress.classList.add("hidden"),3000);
 }
+function lockSendAllBtn(){
+  const btn=document.getElementById("send-all-btn");
+  btn.disabled=true; btn.textContent="✓ ส่งแล้วเดือนนี้";
+  btn.style.cssText="background:#e2e8f0;color:#64748b;cursor:not-allowed;border-color:#e2e8f0";
+}
+
 
 async function sendOneBill(roomNumber){
   const room=allRooms[roomNumber];
