@@ -570,27 +570,26 @@ async function handlePostback(event) {
 // APARTMENT — rent reminder
 // ═══════════════════════════════════════════════════════════════
 function getBillingCycle(now=new Date()){
-  // คำนวณ billing cycle โดยใช้ timezone ไทย
-  // cycle = วันสุดท้ายของเดือนก่อน → วันสุดท้ายของเดือนปัจจุบัน (inclusive)
   const bkk = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
   const y = bkk.getFullYear(), m = bkk.getMonth();
-  const start = new Date(y, m, 0); // วันสุดท้ายของเดือนก่อน (เช่น 28/29 ก.พ. หรือ 31 มี.ค.)
-  const end   = new Date(y, m+1, 0); // วันสุดท้ายของเดือนนี้
-  start.setHours(0,0,0,0);
-  end.setHours(23,59,59,999);
+  // start = วันที่ 1 ของเดือนนี้
+  // end = วันที่ 7 เดือนถัดไป - 8 วัน (≈ 29/30 ของเดือนนี้)
+  const start = new Date(y, m, 1, 0, 0, 0, 0);
+  const end   = new Date(y, m + 1, -1, 23, 59, 59, 999);
   return { start, end };
 }
 
 async function getPaymentStatus(roomNumbers) {
-  const dayNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" })).getDate();
+  const nowBKK = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+  const dayNow = nowBKK.getDate();
+  const curMonth = nowBKK.getMonth(), curYear = nowBKK.getFullYear();
   const payments = await loadPayments();
-  const { start, end } = getBillingCycle();
-  const endOfCycle = new Date(end); endOfCycle.setHours(23,59,59,999);
-  // หา confirmed payment ในรอบนี้
+  // หา confirmed payment ที่ยืนยันในเดือนนี้เท่านั้น (ใช้ updatedAt เดือน+ปีตรงๆ)
   const confirmedPayment = payments.find(p => {
     if (p.status !== "confirmed") return false;
-    const d = new Date(p.receivedAt);
-    if (d < start || d > endOfCycle) return false;
+    const d = new Date(p.updatedAt || p.receivedAt);
+    const dBKK = new Date(d.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+    if (dBKK.getMonth() !== curMonth || dBKK.getFullYear() !== curYear) return false;
     const paidRooms = p.roomNumber.split(",").map(r => r.trim());
     return roomNumbers.some(rn => paidRooms.includes(rn));
   });
@@ -609,12 +608,17 @@ async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
   if (!isTest && !onlyRoom && day !== 5 && (day < 8 || day > 15)) return;
   try {
     const rooms = await loadRooms(), payments = await loadPayments();
-    const {start,end}=getBillingCycle(now);
-    const endOfCycle=new Date(end); endOfCycle.setHours(23,59,59,999);
+    const nowBKK = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+    const curMonth = nowBKK.getMonth(), curYear = nowBKK.getFullYear();
     const paidRooms = new Set(
       isTest ? [] :
       payments
-        .filter(p => { if (p.status !== "confirmed") return false; const d = new Date(p.receivedAt); return d >= start && d <= endOfCycle; })
+        .filter(p => {
+          if (p.status !== "confirmed") return false;
+          const d = new Date(p.updatedAt || p.receivedAt);
+          const dBKK = new Date(d.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+          return dBKK.getMonth() === curMonth && dBKK.getFullYear() === curYear;
+        })
         .flatMap(p => p.roomNumber.split(",").map(r => r.trim()))
     );
     const unpaidRooms = Object.values(rooms).filter(r => r.lineUserId && !paidRooms.has(r.roomNumber) && (!onlyRoom || r.roomNumber === onlyRoom));
