@@ -451,8 +451,7 @@ async function handleUserMessage(event) {
   }
 
   if (user.state === "REGISTERED") {
-    // ไม่ reset state — แค่แจ้งว่าไม่เข้าใจข้อความ
-    await lineReply(event.replyToken, [{ type: "text", text: `ขออภัยค่ะ ไม่เข้าใจข้อความนี้\n\nกรุณาใช้เมนูด้านล่าง หรือพิมพ์:\n• "เปลี่ยนห้อง" — เปลี่ยนห้องลงทะเบียน\n• "ย้ายออก" — แจ้งย้ายออก` }]);
+    // ไม่ตอบข้อความที่ไม่รู้จักทั้งหมด
     return;
   }
 }
