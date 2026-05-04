@@ -195,9 +195,11 @@ function filterByDate(rows, targetDate) {
     if (!row || row.length < 4) continue;
     const room = (row[0] || "").trim(), guest = (row[1] || "").trim();
     const checkIn = normalizeDate(row[2] || ""), checkOut = normalizeDate(row[3] || "");
-    const note = (row[5] || "").trim();
+    // Sheet columns: A=ห้อง B=แขก C=checkIn D=checkOut E=channel F=resId G=note
+    const note     = (row[6] || "").trim();
     if (!room || !guest) continue;
-    const isAirbnb = /ABB-/i.test(row[4] || "") || /airbnb/i.test(row[4] || "");
+    const channel  = (row[4] || "").trim();
+    const isAirbnb = /ABB-/i.test(channel) || /airbnb/i.test(channel);
     const displayNote = (!isAirbnb && note) ? note : "";
     if (checkIn === targetDate)  checkIns.push({ room, guest, note: displayNote });
     if (checkOut === targetDate) checkOuts.push({ room, guest, note: displayNote });
@@ -451,7 +453,8 @@ async function handleUserMessage(event) {
   }
 
   if (user.state === "REGISTERED") {
-    // ไม่ตอบข้อความที่ไม่รู้จักทั้งหมด
+    // ไม่ reset state — แค่แจ้งว่าไม่เข้าใจข้อความ
+    await lineReply(event.replyToken, [{ type: "text", text: `ขออภัยค่ะ ไม่เข้าใจข้อความนี้\n\nกรุณาใช้เมนูด้านล่าง หรือพิมพ์:\n• "เปลี่ยนห้อง" — เปลี่ยนห้องลงทะเบียน\n• "ย้ายออก" — แจ้งย้ายออก` }]);
     return;
   }
 }
@@ -481,8 +484,6 @@ async function handleImageMessage(event) {
     };
     const payments = await loadPayments(); payments.unshift(payment); await savePayments(payments.slice(0, 200));
 
-    const replyText = `✅ ได้รับรูปภาพแล้วค่ะ\n\n🏠 ห้อง: ${roomList}\n\nเจ้าหน้าที่จะดำเนินการและแจ้งให้ทราบโดยเร็วที่สุดค่ะ 😊`;
-    await linePush(userId, [{ type: "text", text: replyText }]);
     console.log(`[Slip] ห้อง ${roomList} - รับสลิปแล้ว id=${paymentId}`);
   } catch (e) {
     console.error("[Slip Error]", e.message);
