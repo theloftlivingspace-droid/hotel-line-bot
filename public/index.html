@@ -354,10 +354,15 @@ let TOKEN="",allRooms={};
 
 function getBillingCycle(now=new Date()){
   const y=now.getFullYear(),m=now.getMonth();
-  // start = วันที่ 1, end = วันที่ 7 เดือนถัดไป - 8 วัน
-  const start=new Date(y,m,1,0,0,0,0);
-  const end=new Date(y,m+1,-1,23,59,59,999); // = วันที่ 29/30 ของเดือนนี้
-  return{start,end};
+  const lastOfCurrent=new Date(y,m+1,0);
+  const isLastDay=now.getDate()===lastOfCurrent.getDate();
+  if(isLastDay){
+    const lastOfNext=new Date(y,m+2,0);
+    return{start:lastOfCurrent,end:new Date(lastOfNext-86400000)};
+  }else{
+    const lastOfPrev=new Date(y,m,0);
+    return{start:lastOfPrev,end:new Date(lastOfCurrent-86400000)};
+  }
 }
 
 async function api(path,opts={}){
@@ -390,7 +395,7 @@ function showPage(name){
   if(name==="payments")loadPayments();
   if(name==="moveout")loadMoveouts();
   if(name==="history"){loadBillHistory();loadLogs();}
-  if(name==="bills"){ loadRooms(); checkSendAllStatus(); }
+  if(name==="bills"){ loadRooms(); checkAndLockSendAllBtn(); }
 }
 
 async function login(){
@@ -420,11 +425,12 @@ async function loadRooms(){
   try {
     const now=new Date();
     const {start,end}=getBillingCycle(now);
+    const endOfCycle=new Date(end); endOfCycle.setHours(23,59,59,999);
     const payments=await api("/api/payments");
     const confirmedThisMonth=payments.filter(p=>{
       if(p.status!=="confirmed")return false;
       const d=new Date(p.updatedAt||p.receivedAt);
-      return d>=start && d<=end;
+      return d>=start && d<=endOfCycle;
     });
     const fmt=d=>d.toLocaleDateString("th-TH",{day:"numeric",month:"short"});
     const lbl=document.getElementById("s-cycle-label");
@@ -519,8 +525,7 @@ async function uploadInvoice(input){
 async function sendAllBills(){
   const rooms=Object.values(allRooms).filter(r=>r.lineUserId);
   if(!rooms.length){alert("ยังไม่มีห้องที่ลงทะเบียน LINE ค่ะ");return;}
-  if(!confirm(`ส่งบิลไปยัง ${rooms.length} ห้องที่ลงทะเบียนแล้ว?
-(กดได้ครั้งเดียวต่อเดือน)`))return;
+  if(!confirm(`ส่งบิลไปยัง ${rooms.length} ห้องที่ลงทะเบียนแล้ว?\n(กดได้ครั้งเดียวต่อเดือน)`))return;
   const btn=document.getElementById("send-all-btn"),result=document.getElementById("bill-result"),progress=document.getElementById("bill-progress");
   btn.disabled=true; btn.textContent="กำลังส่ง…"; result.textContent=""; progress.classList.remove("hidden");
   try{
@@ -532,22 +537,35 @@ async function sendAllBills(){
       setTimeout(()=>progress.classList.add("hidden"),3000);
       return;
     }
-    document.getElementById("bill-progress-text").textContent=`${r.ok}/${r.ok+r.failed}`;
-    result.textContent=`✓ ส่งสำเร็จ ${r.ok} ห้อง${r.failed>0?` · ✗ ล้มเหลว ${r.failed} ห้อง`:""}`;
-    result.style.color=r.failed>0?"#b91c1c":"#15803d";
-    const now2=new Date(), key2=`sent_bills_${now2.getFullYear()}_${now2.getMonth()}`;
-    localStorage.setItem(key2,"1");
+    document.getElementById("bill-progress-text").textContent=`${r.ok}/${r.ok+(r.fail||0)}`;
+    result.textContent=`✓ ส่งสำเร็จ ${r.ok} ห้อง${r.fail>0?` · ✗ ล้มเหลว ${r.fail} ห้อง`:""}`;
+    result.style.color=r.fail>0?"#b91c1c":"#15803d";
     lockSendAllBtn();
   }catch(e){
     result.textContent="เกิดข้อผิดพลาด: "+e.message; result.style.color="#b91c1c";
-    btn.disabled=false; btn.textContent="📤 ส่งบิลทุกห้อง";
+    unlockSendAllBtn();
   }
   setTimeout(()=>progress.classList.add("hidden"),3000);
 }
-function lockSendAllBtn(){
+function lockSendAllBtn(label="✓ ส่งแล้วเดือนนี้"){
   const btn=document.getElementById("send-all-btn");
-  btn.disabled=true; btn.textContent="✓ ส่งแล้วเดือนนี้";
-  btn.style.cssText="background:#e2e8f0;color:#64748b;cursor:not-allowed;border-color:#e2e8f0";
+  btn.disabled=true;
+  btn.textContent=label;
+  btn.style.cssText="background:#e2e8f0;color:#94a3b8;cursor:not-allowed;border:1px solid #e2e8f0;pointer-events:none";
+}
+function unlockSendAllBtn(){
+  const btn=document.getElementById("send-all-btn");
+  btn.disabled=false;
+  btn.textContent="📤 ส่งบิลทุกห้อง";
+  btn.style.cssText="";
+}
+async function checkAndLockSendAllBtn(){
+  try{
+    // ทดสอบโดยส่ง dry-run=true — ถ้า backend บอกว่าส่งแล้ว ก็ lock ปุ่ม
+    const r=await api("/api/send-rent-status");
+    if(r.alreadySent) lockSendAllBtn("✓ ส่งแล้วเดือนนี้");
+    else unlockSendAllBtn();
+  }catch(e){ unlockSendAllBtn(); }
 }
 
 
