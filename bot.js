@@ -828,6 +828,10 @@ app.post("/api/upload-invoice", adminAuth, upload.single("file"), async (req, re
     });
     if (!Object.keys(newRooms).length) return res.status(400).json({ error: "ไม่พบข้อมูลห้องที่ถูกต้อง" });
     await saveRooms(newRooms);
+    // ล้าง guard ส่งบิล เพื่อให้กดส่งบิลได้ในเดือนถัดไป
+    const bkk = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+    const monthKey = `send_rent_${bkk.getFullYear()}_${bkk.getMonth() + 1}`;
+    await redisDel(monthKey);
     res.json({ ok: true, total: Object.keys(newRooms).length, archived: monthLabel, skipped: skipped.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -843,6 +847,12 @@ app.delete("/api/rooms/reset", adminAuth, async (req, res) => {
   Object.keys(freshRooms).forEach(num => { if (oldRooms[num]?.lineUserId) freshRooms[num].lineUserId = oldRooms[num].lineUserId; });
   await saveRooms(freshRooms); res.json({ ok: true, total: Object.keys(freshRooms).length, archived: monthLabel });
 });
+app.get("/api/send-rent-status", adminAuth, async (req, res) => {
+  const bkk = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+  const monthKey = `send_rent_${bkk.getFullYear()}_${bkk.getMonth() + 1}`;
+  const alreadySent = await redisGet(monthKey);
+  res.json({ alreadySent: !!alreadySent, sentAt: alreadySent || null });
+});
 app.post("/api/send-rent", adminAuth, async (req, res) => {
   // guard: ส่งได้แค่เดือนละครั้ง
   const bkk = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
@@ -852,19 +862,31 @@ app.post("/api/send-rent", adminAuth, async (req, res) => {
     return res.json({ ok: false, error: `ส่งบิลทั้งหมดไปแล้วเดือนนี้ (${alreadySent}) กรุณาใช้ปุ่มส่งทีละห้องแทนค่ะ` });
   }
 
+  const dayNow = bkk.getDate();
+  const overdueDays = dayNow > 7 ? dayNow - 7 : 0;
   const rooms = await loadRooms(), allRooms = Object.values(rooms).filter(r => r.lineUserId);
   const grouped = {}; allRooms.forEach(room => { if (!grouped[room.lineUserId]) grouped[room.lineUserId] = []; grouped[room.lineUserId].push(room); });
   let ok = 0, fail = 0; const errors = [];
   for (const [userId, userRooms] of Object.entries(grouped)) {
     let messages;
     if (userRooms.length === 1) {
-      const r = userRooms[0], amount = Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 });
-      messages = [{ type: "text", text: `คุณมีค่าเช่าห้อง ${r.roomNumber} เดือนนี้จำนวน ${amount} บาท ชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล ดูรายละเอียดกดลิงค์นี้ ${r.invoiceLink}` }];
+      const r = userRooms[0];
+      const base = Number(r.amount);
+      const fine = overdueDays * 100;
+      const total = base + fine;
+      const amountStr = base.toLocaleString("th-TH", { minimumFractionDigits: 2 });
+      const totalStr  = total.toLocaleString("th-TH", { minimumFractionDigits: 2 });
+      const fineLine  = fine > 0 ? `\nค่าปรับ (${overdueDays} วัน × 100): ${fine.toLocaleString("th-TH")} บาท\n──────────────────\nยอดรวม: ${totalStr} บาท` : "";
+      const text = `คุณมีค่าเช่าห้อง ${r.roomNumber} เดือนนี้จำนวน ${amountStr} บาท${fineLine}\nชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล ดูรายละเอียดกดลิงค์นี้ ${r.invoiceLink}`;
+      messages = [{ type: "text", text }];
     } else {
-      const total = userRooms.reduce((s, r) => s + Number(r.amount), 0);
+      const fine = overdueDays * 100;
+      const baseTotal = userRooms.reduce((s, r) => s + Number(r.amount), 0);
+      const grandTotal = baseTotal + fine;
       const summary = userRooms.map(r => `🏠 ห้อง ${r.roomNumber}: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`).join("\n");
+      const fineLine = fine > 0 ? `\nค่าปรับ (${overdueDays} วัน × 100): ${fine.toLocaleString("th-TH")} บาท\n──────────────────\nยอดรวม: ${grandTotal.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท` : `\n──────────────────\nรวม: ${grandTotal.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`;
       const bubbles = userRooms.map(r => ({ type: "bubble", size: "kilo", header: { type: "box", layout: "vertical", backgroundColor: "#0d9488", contents: [{ type: "text", text: `ห้อง ${r.roomNumber}`, color: "#ffffff", weight: "bold", size: "md" }] }, body: { type: "box", layout: "vertical", contents: [{ type: "text", text: `ยอด: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`, size: "sm" }] }, footer: { type: "box", layout: "vertical", contents: [{ type: "button", style: "primary", color: "#0d9488", action: { type: "uri", label: "ดูใบแจ้งหนี้", uri: r.invoiceLink } }] } }));
-      messages = [{ type: "text", text: `คุณมีค่าเช่าเดือนนี้ดังนี้ค่ะ\n\n${summary}\n\nรวมทั้งหมด: ${total.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท\nชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล` }, { type: "flex", altText: "ใบแจ้งหนี้ทุกห้อง", contents: { type: "carousel", contents: bubbles } }];
+      messages = [{ type: "text", text: `คุณมีค่าเช่าเดือนนี้ดังนี้ค่ะ\n\n${summary}${fineLine}\nชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล` }, { type: "flex", altText: "ใบแจ้งหนี้ทุกห้อง", contents: { type: "carousel", contents: bubbles } }];
     }
     try { await linePush(userId, messages); ok += userRooms.length; } catch (e) { fail += userRooms.length; userRooms.forEach(r => errors.push({ room: r.roomNumber, error: e.message })); }
     await new Promise(r => setTimeout(r, 250));
@@ -881,8 +903,17 @@ app.post("/api/send-rent-one/:roomNumber", adminAuth, async (req, res) => {
   const rooms = await loadRooms(), room = rooms[req.params.roomNumber];
   if (!room) return res.json({ ok: false, error: "ไม่พบห้อง" });
   if (!room.lineUserId) return res.json({ ok: false, error: "ไม่มี LINE ID" });
-  const amount = Number(room.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 });
-  try { await linePush(room.lineUserId, [{ type: "text", text: `คุณมีค่าเช่าห้อง ${room.roomNumber} เดือนนี้จำนวน ${amount} บาท ชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล ดูรายละเอียดกดลิงค์นี้ ${room.invoiceLink}` }]); res.json({ ok: true }); }
+  const bkk = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+  const dayNow = bkk.getDate();
+  const overdueDays = dayNow > 7 ? dayNow - 7 : 0;
+  const base = Number(room.amount);
+  const fine = overdueDays * 100;
+  const total = base + fine;
+  const amountStr = base.toLocaleString("th-TH", { minimumFractionDigits: 2 });
+  const totalStr  = total.toLocaleString("th-TH", { minimumFractionDigits: 2 });
+  const fineLine  = fine > 0 ? `\nค่าปรับ (${overdueDays} วัน × 100): ${fine.toLocaleString("th-TH")} บาท\n──────────────────\nยอดรวม: ${totalStr} บาท` : "";
+  const text = `คุณมีค่าเช่าห้อง ${room.roomNumber} เดือนนี้จำนวน ${amountStr} บาท${fineLine}\nชำระภายในวันที่ 7 โอนผ่านบัญชีธนาคารไทยพาณิชย์ 353-2-05292-9 หรือ ธนาคารกสิกรไทย 799-2-39682-9 ชื่อบัญชี ณัฐวุฒิ จงจิตตาภิบาล ดูรายละเอียดกดลิงค์นี้ ${room.invoiceLink}`;
+  try { await linePush(room.lineUserId, [{ type: "text", text }]); res.json({ ok: true }); }
   catch (e) { res.json({ ok: false, error: e.message }); }
 });
 app.post("/api/broadcast", adminAuth, async (req, res) => {
@@ -959,8 +990,8 @@ startWebhookServer();
 
 // Hotel cron 19:00
 cron.schedule(CRON_SCHED, runHotelJob, { timezone: "Asia/Bangkok" });
-// Rent reminder เช็คทุกชั่วโมง
-
+// Rent reminder: วันที่ 5 และ 8-15 เวลา 7:00 น.
+cron.schedule("0 7 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });
 if (process.argv.includes("--test")) { console.log("โหมดทดสอบ..."); runHotelJob(); }
 if (process.argv.includes("--sync")) { console.log("sync email ทันที..."); syncEmails(); }
 
