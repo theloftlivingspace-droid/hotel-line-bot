@@ -195,11 +195,22 @@ function filterByDate(rows, targetDate) {
     if (!row || row.length < 4) continue;
     const room = (row[0] || "").trim(), guest = (row[1] || "").trim();
     const checkIn = normalizeDate(row[2] || ""), checkOut = normalizeDate(row[3] || "");
-    // Sheet columns: A=ห้อง B=แขก C=checkIn D=checkOut E=channel F=resId G=note
-    const note     = (row[6] || "").trim();
+    // รองรับ 2 โครงสร้าง:
+    // เก่า (6 cols): A=ห้อง B=แขก C=checkIn D=checkOut E=resId F=note
+    // ใหม่ (7 cols): A=ห้อง B=แขก C=checkIn D=checkOut E=channel F=resId G=note
+    let channel, resId, note;
+    if (row.length >= 7) {
+      channel = (row[4] || "").trim();
+      resId   = (row[5] || "").trim();
+      note    = (row[6] || "").trim();
+    } else {
+      channel = "";
+      resId   = (row[4] || "").trim();
+      note    = (row[5] || "").trim();
+    }
     if (!room || !guest) continue;
-    const channel  = (row[4] || "").trim();
-    const isAirbnb = /ABB-/i.test(channel) || /airbnb/i.test(channel);
+    const isAirbnb = /ABB-/i.test(channel) || /airbnb/i.test(channel) ||
+                     /ABB-/i.test(resId)   || /airbnb/i.test(resId);
     const displayNote = (!isAirbnb && note) ? note : "";
     if (checkIn === targetDate)  checkIns.push({ room, guest, note: displayNote });
     if (checkOut === targetDate) checkOuts.push({ room, guest, note: displayNote });
