@@ -119,6 +119,46 @@ async function addPendingRow(sheets, res) {
   });
 }
 
+// ─────────────────────────────────────────────
+// ตรวจห้องว่างตามช่วงวันที่
+// ─────────────────────────────────────────────
+// คืน subset ของ candidateRooms ที่ไม่มีการจองทับซ้อนกับ [newCheckIn, newCheckOut)
+async function getAvailableRooms(sheets, candidateRooms, newCheckIn, newCheckOut) {
+  const result = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: SHEET_NAME + "!A:G",
+  });
+  const rows = result.data.values || [];
+
+  const occupiedRooms = new Set();
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length < 4) continue;
+
+    const roomCol  = (row[0] || "").trim();
+    // ข้ามแถวที่รอยืนยัน/ยกเลิก/ว่าง
+    if (!roomCol || roomCol === "รอยืนยัน" || roomCol === "ยกเลิก") continue;
+
+    // roomCol อาจเป็น "103 Elegance" → ดึงเฉพาะตัวเลขหน้า
+    const roomNum = roomCol.split(/\s+/)[0];
+    if (!candidateRooms.includes(roomNum)) continue;
+
+    const existIn  = normalizeDate(row[2] || "");
+    const existOut = normalizeDate(row[3] || "");
+    if (!existIn || !existOut) continue;
+
+    // overlap: existIn < newCheckOut  AND  existOut > newCheckIn
+    if (existIn < newCheckOut && existOut > newCheckIn) {
+      occupiedRooms.add(roomNum);
+      console.log(`  ห้อง ${roomNum} ถูกจองอยู่ (${existIn}→${existOut}) ทับ (${newCheckIn}→${newCheckOut})`);
+    }
+  }
+
+  const available = candidateRooms.filter(r => !occupiedRooms.has(r));
+  console.log(`getAvailableRooms [${candidateRooms.join(",")}] ${newCheckIn}→${newCheckOut}: ว่าง=[${available.join(",")}]`);
+  return available;
+}
+
 async function updateRoomInSheet(sheets, resId, roomNumber) {
   const result = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
@@ -156,8 +196,8 @@ async function linePush(to, text) {
   }
 }
 
-async function sendNewBookingToAdmin(res, roomLabel) {
-  // roomLabel: ถ้ามี = auto-assigned แล้ว, ถ้าไม่มี = รอแอดมินตอบ
+async function sendNewBookingToAdmin(res, roomLabel, status = null) {
+  // roomLabel: ห้องที่ auto-assign แล้ว  |  status: "conflict" = ไม่มีห้องว่าง
   const depositLine = res.isAirbnb ? "" : "\n\u{1F4B0} เก็บมัดจำ 3,000 บาท";
   const sep = "\u2500".repeat(25);
   const roomType = getRoomTypeFromName(res.roomName || "");
@@ -167,6 +207,9 @@ async function sendNewBookingToAdmin(res, roomLabel) {
   if (roomLabel) {
     roomLine = "\u{1F511} " + roomLabel + " (กำหนดอัตโนมัติ)";
     hintLine = "\u{2139}\uFE0F แจ้งเพื่อทราบ ไม่ต้องตอบกลับ";
+  } else if (status === "conflict") {
+    roomLine = "\u26A0\uFE0F " + (roomType || "(ไม่ทราบ type)") + " \u2014 ไม่มีห้องว่างช่วงนี้!";
+    hintLine = "\u{1F447} กรุณาตรวจสอบและระบุห้อง: " + matchedRooms.join(", ");
   } else if (matchedRooms.length > 1) {
     roomLine = "\u{1F6CF} " + (roomType || "(รอระบุห้อง)");
     hintLine = "\u{1F447} ตอบกลับห้องไหน: " + matchedRooms.join(" หรือ ");
@@ -184,7 +227,7 @@ async function sendNewBookingToAdmin(res, roomLabel) {
     depositLine + "\n" + sep + "\n" +
     hintLine;
   await linePush(ADMIN_ID, msg);
-  console.log("แจ้ง admin: " + res.resId + (roomLabel ? " [auto=" + roomLabel + "]" : ""));
+  console.log("แจ้ง admin: " + res.resId + (roomLabel ? " [auto=" + roomLabel + "]" : status === "conflict" ? " [CONFLICT]" : ""));
 }
 
 async function sendConfirmToAdmin(resId, roomNumber, guest) {
@@ -230,6 +273,16 @@ function isoDate(str) {
   return year + "-" + String(mon).padStart(2,"0") + "-" + String(day).padStart(2,"0");
 }
 
+// แปลงวันที่ใน Sheet → ISO (รองรับทั้ง YYYY-MM-DD และ DD/MM/YYYY)
+function normalizeDate(str) {
+  if (!str) return "";
+  str = str.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  const dmy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmy) return dmy[3] + "-" + dmy[2].padStart(2,"0") + "-" + dmy[1].padStart(2,"0");
+  return str;
+}
+
 function parseEmail(email) {
   const body = extractText(email);
   const subject = email.subject || "";
@@ -258,6 +311,7 @@ function parseEmail(email) {
   const guestKey  = m[1].trim().toLowerCase().replace(/[^a-z]/g, "") .substring(0, 10) || Buffer.from(m[1].trim()).toString("hex").substring(0, 10);
   const isAirbnb  = /airbnb/i.test(channel);
   const prefix    = /airbnb/i.test(channel)     ? "ABB" :
+                    /direct/i.test(channel)     ? "DBK" :
                     /booking/i.test(channel)     ? "BKC" :
                     /expedia/i.test(channel)     ? "EXP" :
                     /trip/i.test(channel)        ? "TRP" : "OTH";
@@ -417,20 +471,36 @@ async function syncEmails() {
       await addPendingRow(sheets, res);
       await appendEmailLog(sheets, res);
 
-      // auto-assign ถ้า type นั้นมีแค่ห้องเดียว
-      const roomType = getRoomTypeFromName(res.roomName || "");
+      // ─── auto-assign: เลือกห้องว่างเลขน้อยสุดในประเภทเดียวกัน ───
+      const roomType    = getRoomTypeFromName(res.roomName || "");
       const matchedRooms = getRoomsOfType(roomType);
-      if (matchedRooms.length === 1) {
-        const roomLabel = getRoomLabel(matchedRooms[0]);
-        await updateRoomInSheet(sheets, res.resId, roomLabel);
-        console.log("auto-assign: " + res.resId + " -> " + roomLabel);
-        const today = todayBKK(), tomorrow = tomorrowBKK(), hour = hourBKK();
-        if (res.checkIn === today || (res.checkIn === tomorrow && hour >= 19)) {
-          await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note);
-        }
-        await sendNewBookingToAdmin(res, roomLabel);
-      } else {
+
+      if (matchedRooms.length === 0) {
+        // ไม่รู้ประเภทห้อง → ถามแอดมิน
         await sendNewBookingToAdmin(res, null);
+      } else {
+        // ตรวจห้องว่างตามช่วงวันที่จอง
+        const availableRooms = await getAvailableRooms(sheets, matchedRooms, res.checkIn, res.checkOut);
+
+        if (availableRooms.length === 0) {
+          // ทุกห้องเต็ม → แจ้งแอดมินให้ตรวจสอบ
+          console.log(`conflict: ${roomType} ${res.checkIn}→${res.checkOut} ไม่มีห้องว่าง`);
+          await sendNewBookingToAdmin(res, null, "conflict");
+        } else {
+          // เรียงเลขห้องน้อย→มาก แล้วเลือกอันแรก
+          availableRooms.sort((a, b) => parseInt(a) - parseInt(b));
+          const selectedRoom = availableRooms[0];
+          const roomLabel    = getRoomLabel(selectedRoom);
+
+          await updateRoomInSheet(sheets, res.resId, roomLabel);
+          console.log(`auto-assign: ${res.resId} → ${roomLabel}  (ว่าง ${availableRooms.length}/${matchedRooms.length} ห้อง)`);
+
+          const today    = todayBKK(), tomorrow = tomorrowBKK(), hour = hourBKK();
+          if (res.checkIn === today || (res.checkIn === tomorrow && hour >= 19)) {
+            await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note);
+          }
+          await sendNewBookingToAdmin(res, roomLabel);
+        }
       }
 
       notifiedIds.add(res.resId);
