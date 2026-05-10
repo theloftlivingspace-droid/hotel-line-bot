@@ -471,36 +471,20 @@ async function syncEmails() {
       await addPendingRow(sheets, res);
       await appendEmailLog(sheets, res);
 
-      // ─── auto-assign: เลือกห้องว่างเลขน้อยสุดในประเภทเดียวกัน ───
-      const roomType    = getRoomTypeFromName(res.roomName || "");
+      // auto-assign ถ้า type นั้นมีแค่ห้องเดียว
+      const roomType     = getRoomTypeFromName(res.roomName || "");
       const matchedRooms = getRoomsOfType(roomType);
-
-      if (matchedRooms.length === 0) {
-        // ไม่รู้ประเภทห้อง → ถามแอดมิน
-        await sendNewBookingToAdmin(res, null);
-      } else {
-        // ตรวจห้องว่างตามช่วงวันที่จอง
-        const availableRooms = await getAvailableRooms(sheets, matchedRooms, res.checkIn, res.checkOut);
-
-        if (availableRooms.length === 0) {
-          // ทุกห้องเต็ม → แจ้งแอดมินให้ตรวจสอบ
-          console.log(`conflict: ${roomType} ${res.checkIn}→${res.checkOut} ไม่มีห้องว่าง`);
-          await sendNewBookingToAdmin(res, null, "conflict");
-        } else {
-          // เรียงเลขห้องน้อย→มาก แล้วเลือกอันแรก
-          availableRooms.sort((a, b) => parseInt(a) - parseInt(b));
-          const selectedRoom = availableRooms[0];
-          const roomLabel    = getRoomLabel(selectedRoom);
-
-          await updateRoomInSheet(sheets, res.resId, roomLabel);
-          console.log(`auto-assign: ${res.resId} → ${roomLabel}  (ว่าง ${availableRooms.length}/${matchedRooms.length} ห้อง)`);
-
-          const today    = todayBKK(), tomorrow = tomorrowBKK(), hour = hourBKK();
-          if (res.checkIn === today || (res.checkIn === tomorrow && hour >= 19)) {
-            await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note);
-          }
-          await sendNewBookingToAdmin(res, roomLabel);
+      if (matchedRooms.length === 1) {
+        const roomLabel = getRoomLabel(matchedRooms[0]);
+        await updateRoomInSheet(sheets, res.resId, roomLabel);
+        console.log("auto-assign: " + res.resId + " -> " + roomLabel);
+        const today = todayBKK(), tomorrow = tomorrowBKK(), hour = hourBKK();
+        if (res.checkIn === today || (res.checkIn === tomorrow && hour >= 19)) {
+          await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note);
         }
+        await sendNewBookingToAdmin(res, roomLabel);
+      } else {
+        await sendNewBookingToAdmin(res, null);
       }
 
       notifiedIds.add(res.resId);
