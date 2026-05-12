@@ -199,11 +199,13 @@ function filterByDate(rows, targetDate) {
     // เก่า (6 cols): A=ห้อง B=แขก C=checkIn D=checkOut E=resId F=note
     // ใหม่ (7 cols): A=ห้อง B=แขก C=checkIn D=checkOut E=channel F=resId G=note
     let channel, resId, note;
-    if (row.length >= 7) {
+    if (/^(ABB|BKC|EXP|TRP|DBK|OTH)-/i.test(row[5])) {
+      // ใหม่ (7 cols): A=ห้อง B=แขก C=checkIn D=checkOut E=channel F=resId G=note
       channel = (row[4] || "").trim();
       resId   = (row[5] || "").trim();
       note    = (row[6] || "").trim();
     } else {
+      // เก่า (6 cols): A=ห้อง B=แขก C=checkIn D=checkOut E=resId F=note
       channel = "";
       resId   = (row[4] || "").trim();
       note    = (row[5] || "").trim();
