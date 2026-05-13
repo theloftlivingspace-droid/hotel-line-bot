@@ -166,7 +166,7 @@ async function fetchSheetData() {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:F",
+    range: SHEET_NAME + "!A:G",
   });
   const rows = res.data.values || [];
   console.log("ดึงข้อมูลจาก Google Sheets: " + (rows.length - 1) + " แถว");
@@ -256,7 +256,7 @@ async function runHotelJob() {
 
 // ─── Hotel: reply เลขห้องจากกลุ่ม ──────────────────────────────
 async function updateRoomInSheet(sheets, resId, roomNumber) {
-  const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:F" });
+  const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:G" });
   const rows = result.data.values || [];
   for (let i = 1; i < rows.length; i++) {
     if ((rows[i][4] || "").trim() === resId) {
