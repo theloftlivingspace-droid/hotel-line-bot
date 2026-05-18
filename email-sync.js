@@ -293,6 +293,19 @@ function normalizeDate(str) {
   return str;
 }
 
+// ดึงชื่อ OTA จาก keyword — ไม่สนว่าหลัง channel จะมี trailing text อะไรตามมา
+function normalizeChannel(rawChannel, subject, body) {
+  const all = (rawChannel || "") + " " + (subject || "") + " " + (body || "").substring(0, 500);
+  if (/airbnb/i.test(all))           return "Airbnb";
+  if (/booking\.com/i.test(all))     return "Booking.com";
+  if (/trip\.com|tripcom/i.test(all))return "Trip.com";
+  if (/expedia/i.test(all))          return "Expedia";
+  if (/agoda/i.test(all))            return "Agoda";
+  if (/direct|ตรง/i.test(all))       return "Direct";
+  // fallback: เอาแค่คำแรกของ rawChannel
+  return (rawChannel || "Other").trim().split(/\s+/)[0];
+}
+
 function parseEmail(email) {
   const body = extractText(email);
   const subject = email.subject || "";
@@ -319,15 +332,13 @@ function parseEmail(email) {
     roomName = mEn[2].trim();
     checkIn  = isoDate(mEn[3].trim());
     checkOut = isoDate(mEn[4].trim());
-    channel  = mEn[5].trim().replace(/\s+(We're|For\s+guidance|Click\s+here|\.).*$/i, "").trim()
-      .replace(/Trip\.com.*$/i, "Trip").replace(/Booking\.com.*$/i, "Booking");
+    channel  = normalizeChannel(mEn[5], subject, body);
   } else if (mTh) {
     guest    = mTh[1].trim();
     roomName = mTh[2].trim();
     checkIn  = isoDate(mTh[3].trim());
     checkOut = isoDate(mTh[4].trim());
-    channel  = mTh[5].trim().replace(/\s+(เราพร้อม|สำหรับ|\.).*$/i, "").trim()
-      .replace(/Trip\.com.*$/i, "Trip").replace(/Booking\.com.*$/i, "Booking");
+    channel  = normalizeChannel(mTh[5], subject, body);
   } else {
     console.log("parse FAIL (no match): subject=" + subject.substring(0, 80));
     console.log("parse FAIL body(200):", cleaned.substring(0, 200));
