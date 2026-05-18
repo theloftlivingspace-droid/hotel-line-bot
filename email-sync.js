@@ -266,10 +266,18 @@ function extractText(email) {
 }
 
 function isoDate(str) {
-  const months = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12 };
+  const months = {
+    // English
+    january:1, february:2, march:3, april:4, may:5, june:6,
+    july:7, august:8, september:9, october:10, november:11, december:12,
+    // Thai
+    "มกราคม":1, "กุมภาพันธ์":2, "มีนาคม":3, "เมษายน":4,
+    "พฤษภาคม":5, "มิถุนายน":6, "กรกฎาคม":7, "สิงหาคม":8,
+    "กันยายน":9, "ตุลาคม":10, "พฤศจิกายน":11, "ธันวาคม":12,
+  };
   const clean = str.replace(/(\d+)(st|nd|rd|th)/i, "$1").trim();
   const parts = clean.split(/\s+/);
-  const day = parseInt(parts[0]), mon = months[(parts[1]||"").toLowerCase()];
+  const day = parseInt(parts[0]), mon = months[(parts[1]||"").toLowerCase()] || months[parts[1]];
   const year = parts[2] ? parseInt(parts[2]) : new Date().getFullYear();
   if (!day || !mon) return null;
   return year + "-" + String(mon).padStart(2,"0") + "-" + String(day).padStart(2,"0");
@@ -291,37 +299,59 @@ function parseEmail(email) {
   if (!body || body.length < 20) return null;
 
   const cleaned = body.replace(/(?:New\s+Reservation\s+(?:\d+\s+)?)+/gi, " ").replace(/\s+/g, " ").trim();
-  const m = cleaned.match(
+
+  let guest, roomName, checkIn, checkOut, channel;
+
+  // ── English pattern ──────────────────────────────────────────────────────
+  // "{guest} booked the {room} for {checkIn} to {checkOut} on {channel}"
+  const mEn = cleaned.match(
     /([\p{L}\u4e00-\u9fff][\p{L}\u4e00-\u9fff\w\s,.''-]{1,50}?)\s+booked\s+the\s+(.+?)\s+for\s+(.+?)\s+to\s+(.+?)\s+on\s+([^\n\r]+)/imu
   );
-  if (!m) {
+
+  // ── Thai pattern ─────────────────────────────────────────────────────────
+  // "{guest} จองห้อง {room} สำหรับวันที่ {checkIn} ถึง {checkOut} ทาง {channel}"
+  const mTh = cleaned.match(
+    /([\p{L}\u4e00-\u9fff][\p{L}\u4e00-\u9fff\w\s,.''-]{1,50}?)\s+จองห้อง\s+(.+?)\s+สำหรับวันที่\s+(.+?)\s+ถึง\s+(.+?)\s+ทาง\s+([^\n\r(]+)/imu
+  );
+
+  if (mEn) {
+    guest    = mEn[1].trim();
+    roomName = mEn[2].trim();
+    checkIn  = isoDate(mEn[3].trim());
+    checkOut = isoDate(mEn[4].trim());
+    channel  = mEn[5].trim().replace(/\s+(We're|For\s+guidance|Click\s+here|\.).*$/i, "").trim()
+      .replace(/Trip\.com.*$/i, "Trip").replace(/Booking\.com.*$/i, "Booking");
+  } else if (mTh) {
+    guest    = mTh[1].trim();
+    roomName = mTh[2].trim();
+    checkIn  = isoDate(mTh[3].trim());
+    checkOut = isoDate(mTh[4].trim());
+    channel  = mTh[5].trim().replace(/\s+(เราพร้อม|สำหรับ|\.).*$/i, "").trim()
+      .replace(/Trip\.com.*$/i, "Trip").replace(/Booking\.com.*$/i, "Booking");
+  } else {
     console.log("parse FAIL (no match): subject=" + subject.substring(0, 80));
     console.log("parse FAIL body(200):", cleaned.substring(0, 200));
     return null;
   }
 
-  const checkIn  = isoDate(m[3].trim());
-  const checkOut = isoDate(m[4].trim());
   if (!checkIn || !checkOut) {
-    console.log("parse FAIL (date): in=" + m[3].trim() + " out=" + m[4].trim());
+    console.log("parse FAIL (date): in=" + checkIn + " out=" + checkOut);
     return null;
   }
 
-  const channel = m[5].trim().replace(/\s+(We're|For\s+guidance|Click\s+here|\.).*$/i, "").trim()
-    .replace(/Trip\.com.*$/i, "Trip").replace(/Booking\.com.*$/i, "Booking");
   const codeMatch = (subject + " " + body).match(/\b[A-Z]{2,4}-[A-Z0-9]{6,}\b/);
-  const guestKey  = m[1].trim().toLowerCase().replace(/[^a-z]/g, "") .substring(0, 10) || Buffer.from(m[1].trim()).toString("hex").substring(0, 10);
+  const guestKey  = guest.toLowerCase().replace(/[^a-z]/g, "").substring(0, 10) || Buffer.from(guest).toString("hex").substring(0, 10);
   const isAirbnb  = /airbnb/i.test(channel);
-  const prefix    = /airbnb/i.test(channel)     ? "ABB" :
-                    /direct/i.test(channel)     ? "DBK" :
-                    /booking/i.test(channel)     ? "BKC" :
-                    /expedia/i.test(channel)     ? "EXP" :
-                    /trip/i.test(channel)        ? "TRP" : "OTH";
+  const prefix    = /airbnb/i.test(channel)  ? "ABB" :
+                    /direct/i.test(channel)  ? "DBK" :
+                    /booking/i.test(channel) ? "BKC" :
+                    /expedia/i.test(channel) ? "EXP" :
+                    /trip/i.test(channel)    ? "TRP" : "OTH";
   const resId     = codeMatch ? codeMatch[0] : (prefix + "-" + guestKey + "-" + checkIn.replace(/-/g, ""));
 
-  console.log("parse OK: " + resId + " | " + m[1].trim() + " | " + channel + " | " + checkIn + " -> " + checkOut);
+  console.log("parse OK: " + resId + " | " + guest + " | " + channel + " | " + checkIn + " -> " + checkOut);
 
-  return { resId, guest: m[1].trim(), roomName: m[2].trim(), checkIn, checkOut, channel, isAirbnb, note: isAirbnb ? "" : "มัดจำ 3,000 บาท" };
+  return { resId, guest, roomName, checkIn, checkOut, channel, isAirbnb, note: isAirbnb ? "" : "มัดจำ 3,000 บาท" };
 }
 
 // ─────────────────────────────────────────────
