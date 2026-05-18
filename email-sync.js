@@ -451,26 +451,55 @@ function fetchEmails(since) {
       tlsOptions: { rejectUnauthorized: false },
     });
     const emails = [];
-    imap.once("ready", () => {
-      imap.openBox("INBOX", true, (err) => {
-        if (err) return reject(err);
-        imap.search([
-          ["SINCE", since],
-          ["FROM", "no-reply@app.littlehotelier.com"],
-          ["SUBJECT", "New Reservation"],
-        ], (err, uids) => {
-          if (err || !uids || uids.length === 0) { console.log("ไม่พบอีเมลใหม่"); imap.end(); return resolve([]); }
-          console.log("พบอีเมล: " + uids.length + " ฉบับ");
-          const fetch = imap.fetch(uids, { bodies: "" });
-          const tasks = [];
-          fetch.on("message", (msg) => {
-            tasks.push(new Promise((res) => {
-              msg.on("body", (stream) => { simpleParser(stream, (err, parsed) => { if (!err) emails.push(parsed); res(); }); });
-            }));
-          });
-          fetch.once("end", async () => { await Promise.all(tasks); imap.end(); resolve(emails); });
-          fetch.once("error", (e) => { imap.end(); reject(e); });
+
+    // helper: fetch a list of uids → parsed emails
+    function fetchUids(uids) {
+      return new Promise((res, rej) => {
+        if (!uids || uids.length === 0) return res([]);
+        const fetched = [];
+        const f = imap.fetch(uids, { bodies: "" });
+        const tasks = [];
+        f.on("message", (msg) => {
+          tasks.push(new Promise((r) => {
+            msg.on("body", (stream) => { simpleParser(stream, (err, parsed) => { if (!err) fetched.push(parsed); r(); }); });
+          }));
         });
+        f.once("end", async () => { await Promise.all(tasks); res(fetched); });
+        f.once("error", rej);
+      });
+    }
+
+    imap.once("ready", () => {
+      imap.openBox("INBOX", true, async (err) => {
+        if (err) return reject(err);
+
+        const base = [["SINCE", since], ["FROM", "no-reply@app.littlehotelier.com"]];
+
+        // search EN and TH subjects in parallel (both over same open connection sequentially)
+        const search = (criteria) => new Promise((res, rej) =>
+          imap.search(criteria, (e, uids) => e ? rej(e) : res(uids || []))
+        );
+
+        try {
+          const [uidsEn, uidsTh] = await Promise.all([
+            search([...base, ["SUBJECT", "New Reservation"]]),
+            search([...base, ["SUBJECT", "การจองใหม่"]]),
+          ]);
+
+          // merge + deduplicate uid lists
+          const allUids = [...new Set([...uidsEn, ...uidsTh])];
+          console.log(`พบอีเมล: EN=${uidsEn.length} TH=${uidsTh.length} รวม=${allUids.length} ฉบับ`);
+
+          if (allUids.length === 0) { console.log("ไม่พบอีเมลใหม่"); imap.end(); return resolve([]); }
+
+          const fetched = await fetchUids(allUids);
+          emails.push(...fetched);
+          imap.end();
+          resolve(emails);
+        } catch (e) {
+          imap.end();
+          reject(e);
+        }
       });
     });
     imap.once("error", reject);
