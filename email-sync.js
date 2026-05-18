@@ -31,6 +31,8 @@ const ROOM_TYPE_MAP = {
   "203": "Allure",
   "204": "Elegance",
   "205": "Allure",
+  "209": "Radiance",
+  "210": "Radiance",
   "214": "Legacy",
   "300": "Luxury",
 };
