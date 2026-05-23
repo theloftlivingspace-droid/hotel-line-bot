@@ -996,10 +996,12 @@ function startWebhookServer() {
 console.log("Hotel + Apartment LINE Bot พร้อมทำงาน");
 ensureDir(DATA_DIR);
 
-const { syncEmails, handleLineReply: emailHandleReply } = require("./email-sync");
+const { syncEmails, handleLineReply: emailHandleReply, syncPayouts } = require("./email-sync");
 console.log("Email Sync พร้อมทำงาน (ทุก 30 นาที)");
+console.log("Payout Sync พร้อมทำงาน (ทุก 1 ชั่วโมง)");
 console.log("GOOGLE_SHEET_ID:", process.env.GOOGLE_SHEET_ID || "(ไม่พบ)");
 console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่พบ)");
+console.log("MASTER_SHEET_ID:", process.env.MASTER_SHEET_ID || "(ใช้ GOOGLE_SHEET_ID)");
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON:", process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? `OK (${process.env.GOOGLE_SERVICE_ACCOUNT_JSON.length} chars)` : "(ไม่พบ)");
 
 startWebhookServer();
@@ -1008,8 +1010,11 @@ startWebhookServer();
 cron.schedule(CRON_SCHED, runHotelJob, { timezone: "Asia/Bangkok" });
 // Rent reminder: วันที่ 5 และ 8-15 เวลา 7:00 น.
 cron.schedule("0 7 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });
+// Payout sync ทุก 1 ชั่วโมง
+cron.schedule("0 * * * *", syncPayouts, { timezone: "Asia/Bangkok" });
 if (process.argv.includes("--test")) { console.log("โหมดทดสอบ..."); runHotelJob(); }
-if (process.argv.includes("--sync")) { console.log("sync email ทันที..."); syncEmails(); }
+if (process.argv.includes("--sync"))         { console.log("sync email ทันที...");  syncEmails(); }
+if (process.argv.includes("--sync-payout")) { console.log("payout sync ทันที..."); syncPayouts(); }
 
 // ─── Default rooms (apartment) ─────────────────────────────────
 function buildDefaultRooms() {
