@@ -612,10 +612,10 @@ async function getPaymentStatus(roomNumbers) {
   const dayNow = nowBKK.getDate();
   const curMonth = nowBKK.getMonth(), curYear = nowBKK.getFullYear();
   const payments = await loadPayments();
-  // หา confirmed payment ที่ยืนยันในเดือนนี้เท่านั้น (ใช้ updatedAt เดือน+ปีตรงๆ)
+  // หา confirmed payment โดยใช้ receivedAt (วันที่ส่งสลิป) เพื่อให้ตรงกับเดือนที่ชำระ
   const confirmedPayment = payments.find(p => {
     if (p.status !== "confirmed") return false;
-    const d = new Date(p.updatedAt || p.receivedAt);
+    const d = new Date(p.receivedAt);
     const dBKK = new Date(d.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
     if (dBKK.getMonth() !== curMonth || dBKK.getFullYear() !== curYear) return false;
     const paidRooms = p.roomNumber.split(",").map(r => r.trim());
