@@ -610,10 +610,14 @@ function getBillingCycle(now=new Date()){
 async function getPaymentStatus(roomNumbers) {
   const nowBKK = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
   const dayNow = nowBKK.getDate();
+  const curMonth = nowBKK.getMonth(), curYear = nowBKK.getFullYear();
   const payments = await loadPayments();
-  // ไม่เช็คเดือน — ดูแค่ว่า payment ล่าสุดของห้องนี้ confirmed หรือยัง
+  // เช็คเฉพาะ confirmed payment ของเดือนปัจจุบัน (เดือนก่อนถูก archive ตอนโหลดบิลใหม่แล้ว)
   const confirmedPayment = payments.find(p => {
     if (p.status !== "confirmed") return false;
+    const d = new Date(p.receivedAt);
+    const dBKK = new Date(d.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+    if (dBKK.getMonth() !== curMonth || dBKK.getFullYear() !== curYear) return false;
     const paidRooms = p.roomNumber.split(",").map(r => r.trim());
     return roomNumbers.some(rn => paidRooms.includes(rn));
   });
@@ -855,6 +859,10 @@ app.post("/api/upload-invoice", adminAuth, upload.single("file"), async (req, re
     });
     if (!Object.keys(newRooms).length) return res.status(400).json({ error: "ไม่พบข้อมูลห้องที่ถูกต้อง" });
     await saveRooms(newRooms);
+    // ล้าง confirmed payments เก่า เพื่อให้สถานะชำระรีเซ็ตพร้อมบิลใหม่
+    const oldPayments = await loadPayments();
+    const resetPayments = oldPayments.map(p => p.status === "confirmed" ? { ...p, status: "archived" } : p);
+    await savePayments(resetPayments);
     // ล้าง guard ส่งบิล เพื่อให้กดส่งบิลได้ในเดือนถัดไป
     const bkk = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
     const monthKey = `send_rent_${bkk.getFullYear()}_${bkk.getMonth() + 1}`;
