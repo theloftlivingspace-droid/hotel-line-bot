@@ -951,6 +951,15 @@ app.post("/api/send-rent-one/:roomNumber", adminAuth, async (req, res) => {
   try { await linePush(room.lineUserId, [{ type: "text", text }]); res.json({ ok: true }); }
   catch (e) { res.json({ ok: false, error: e.message }); }
 });
+app.post("/api/send-msg-one", adminAuth, async (req, res) => {
+  const { roomNumber, message } = req.body;
+  if (!roomNumber || !message) return res.json({ ok: false, error: "ต้องระบุ roomNumber และ message" });
+  const rooms = await loadRooms(), room = rooms[roomNumber];
+  if (!room) return res.json({ ok: false, error: `ไม่พบห้อง ${roomNumber}` });
+  if (!room.lineUserId) return res.json({ ok: false, error: `ห้อง ${roomNumber} ไม่มี LINE ID` });
+  try { await linePush(room.lineUserId, [{ type: "text", text: message }]); res.json({ ok: true }); }
+  catch (e) { res.json({ ok: false, error: e.message }); }
+});
 app.post("/api/broadcast", adminAuth, async (req, res) => {
   const { message } = req.body; if (!message) return res.status(400).json({ error: "message required" });
   const targets = Object.values(await loadRooms()).filter(r => r.lineUserId);
@@ -1093,3 +1102,4 @@ function buildDefaultRooms() {
   data.forEach(d => { rooms[d.roomNumber] = { ...d, lineUserId: "" }; });
   return rooms;
 }
+
