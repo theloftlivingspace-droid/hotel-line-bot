@@ -144,10 +144,10 @@ textarea.input{resize:vertical;line-height:1.7}
   <div class="sidebar">
     <div class="sidebar-section">หลัก</div>
     <button class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')"><span class="icon">📊</span>ภาพรวม</button>
-    <button class="nav-item" data-page="bills" onclick="showPage('bills')"><span class="icon">💸</span>ส่งบิลค่าเช่า</button>
+    <button class="nav-item" data-page="bills" onclick="showPage('bills')"><span class="icon">💸</span>ค่าเช่า</button>
+    <button class="nav-item" data-page="payments" onclick="showPage('payments')"><span class="icon">💳</span>สลิปชำระเงิน<span class="nav-badge hidden" id="badge-payments">0</span></button>
     <div class="sidebar-section">จัดการ</div>
     <button class="nav-item" data-page="rooms" onclick="showPage('rooms')"><span class="icon">🏠</span>จัดการห้อง</button>
-    <button class="nav-item" data-page="payments" onclick="showPage('payments')"><span class="icon">💳</span>สลิปชำระเงิน<span class="nav-badge hidden" id="badge-payments">0</span></button>
     <button class="nav-item" data-page="moveout" onclick="showPage('moveout')"><span class="icon">📦</span>แจ้งย้ายออก<span class="nav-badge hidden" id="badge-moveout">0</span></button>
     <div class="sidebar-section">ข้อมูล</div>
     <button class="nav-item" data-page="history" onclick="showPage('history')"><span class="icon">📁</span>ประวัติบิล</button>
@@ -205,7 +205,7 @@ textarea.input{resize:vertical;line-height:1.7}
 
     <!-- BILLS -->
     <div class="page" id="page-bills">
-      <div class="page-title">ส่งบิลค่าเช่า</div>
+      <div class="page-title">ค่าเช่า</div>
       <div class="panel">
         <div class="panel-head">
           <span>อัปเดตและส่งบิล</span>
