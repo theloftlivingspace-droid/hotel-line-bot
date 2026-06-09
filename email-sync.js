@@ -298,7 +298,7 @@ function normalizeChannel(rawChannel, subject, body) {
   const all = (rawChannel || "") + " " + (subject || "") + " " + (body || "").substring(0, 500);
   if (/airbnb/i.test(all))           return "Airbnb";
   if (/booking\.com/i.test(all))     return "Booking.com";
-  if (/trip\.com|tripcom/i.test(all))return "Trip.com";
+  if (/trip\.com|tripcom/i.test(all))return "Trip";
   if (/expedia/i.test(all))          return "Expedia";
   if (/agoda/i.test(all))            return "Agoda";
   if (/direct|ตรง/i.test(all))       return "Direct";
@@ -573,3 +573,4 @@ module.exports = { syncEmails, handleLineReply };
 console.log("Email Sync พร้อมทำงาน (ทุก 30 นาที)");
 cron.schedule("*/30 * * * *", syncEmails, { timezone: "Asia/Bangkok" });
 if (process.argv.includes("--sync")) { console.log("sync ทันที..."); syncEmails(); }
+
