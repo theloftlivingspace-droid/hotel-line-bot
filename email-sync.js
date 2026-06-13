@@ -535,6 +535,7 @@ async function syncEmails() {
     const emails = await fetchEmails(since);
 
     let newCount = 0;
+    const heldRooms = new Set(); // ห้องที่ assign ไปแล้วในรอบนี้ (กันชนกันเมื่อมีหลาย booking พร้อมกัน)
     for (const email of emails) {
       const res = parseEmail(email);
       if (!res) continue;
@@ -543,11 +544,30 @@ async function syncEmails() {
       await addPendingRow(sheets, res);
       await appendEmailLog(sheets, res);
 
-      // auto-assign ถ้า type นั้นมีแค่ห้องเดียว
+      // auto-assign: เลือกห้องว่างใน type เดียวกัน, เลขห้องน้อยก่อน
       const roomType     = getRoomTypeFromName(res.roomName || "");
-      const matchedRooms = getRoomsOfType(roomType);
-      if (matchedRooms.length === 1) {
-        const roomLabel = getRoomLabel(matchedRooms[0]);
+      const candidateRooms = getRoomsOfType(roomType)
+        .slice()
+        .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+
+      let assignedRoom = null;
+      if (candidateRooms.length >= 1) {
+        const checkIn  = normalizeDate(res.checkIn);
+        const checkOut = normalizeDate(res.checkOut);
+        const available = await getAvailableRooms(sheets, candidateRooms, checkIn, checkOut);
+        // กรองห้องที่ถูก assign ไปแล้วใน run นี้ (booking อื่นที่เพิ่ง process ในรอบเดียวกัน)
+        const free = available.filter(r => !heldRooms.has(r));
+
+        if (free.length >= 1) {
+          // เรียงเลขห้องน้อยก่อนแล้วเลือกตัวแรก
+          free.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+          assignedRoom = free[0];
+          heldRooms.add(assignedRoom);
+        }
+      }
+
+      if (assignedRoom) {
+        const roomLabel = getRoomLabel(assignedRoom);
         await updateRoomInSheet(sheets, res.resId, roomLabel);
         console.log("auto-assign: " + res.resId + " -> " + roomLabel);
         const today = todayBKK(), tomorrow = tomorrowBKK(), hour = hourBKK();
@@ -555,6 +575,9 @@ async function syncEmails() {
           await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note);
         }
         await sendNewBookingToAdmin(res, roomLabel);
+      } else if (candidateRooms.length >= 1) {
+        // ทุกห้องใน type นี้ไม่ว่างในช่วงวันที่จอง (รวมที่ถูก hold ใน run นี้)
+        await sendNewBookingToAdmin(res, null, "conflict");
       } else {
         await sendNewBookingToAdmin(res, null);
       }
