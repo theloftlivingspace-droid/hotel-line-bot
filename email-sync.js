@@ -297,7 +297,7 @@ function normalizeDate(str) {
 function normalizeChannel(rawChannel, subject, body) {
   const all = (rawChannel || "") + " " + (subject || "") + " " + (body || "").substring(0, 500);
   if (/airbnb/i.test(all))           return "Airbnb";
-  if (/booking\.com/i.test(all))     return "Booking.com";
+  if (/booking\.com/i.test(all))     return "Booking";
   if (/trip\.com|tripcom/i.test(all))return "Trip";
   if (/expedia/i.test(all))          return "Expedia";
   if (/agoda/i.test(all))            return "Agoda";
