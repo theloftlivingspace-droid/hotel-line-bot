@@ -443,15 +443,8 @@ async function handleLineReply(messageText, sourceId) {
     await sendConfirmToAdmin(resId, roomNumber, info.guest);
 
     if (isCancel) {
-      // ห้อง cancel → skip แจ้งกลุ่มแม่บ้าน แต่ส่งแจ้งเตือนยกเลิกแทน
-      const sep = '─'.repeat(25);
-      const cancelMsg =
-        '\n🚫 ยกเลิกการจอง\n' + sep + '\n' +
-        '🔑 ' + roomNumber + '\n' +
-        '👤 ' + info.guest + '\n' +
-        '📅 เช็คอิน ' + thaiDate(info.checkIn) + '\n' + sep;
-      await linePush(LINE_GROUP, cancelMsg);
-      console.log('แจ้งยกเลิกกลุ่มแม่บ้าน: ' + roomNumber + ' | ' + info.guest);
+      // ห้อง cancel → ไม่ส่งอะไรไปกลุ่มแม่บ้านเลย
+      console.log('cancel booking: skip group notify | ' + roomNumber + ' | ' + info.guest);
       return;
     }
 
