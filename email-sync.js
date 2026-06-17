@@ -411,10 +411,14 @@ async function handleLineReply(messageText, sourceId) {
     return;
   }
 
-  const match = messageText.trim().match(/^(?:ห้อง\s*)?(\d{2,3})$/);
+  const match = messageText.trim().match(/^(?:ห้อง\s*)?(\d{2,3}(?:\s+cancel)?)$/i);
   if (!match) return;
 
-  const roomNumber = getRoomLabel(match[1]);
+  const rawRoom    = match[1].trim();
+  const isCancel   = /\s+cancel$/i.test(rawRoom);
+  const roomNumber = isCancel
+    ? getRoomLabel(rawRoom.replace(/\s+cancel$/i, '').trim()) + ' cancel'
+    : getRoomLabel(rawRoom);
   const sheets = getSheets();
 
   const result = await sheets.spreadsheets.values.get({
@@ -437,6 +441,19 @@ async function handleLineReply(messageText, sourceId) {
     if (!info) { console.log("ไม่เจอ resId: " + resId); return; }
 
     await sendConfirmToAdmin(resId, roomNumber, info.guest);
+
+    if (isCancel) {
+      // ห้อง cancel → skip แจ้งกลุ่มแม่บ้าน แต่ส่งแจ้งเตือนยกเลิกแทน
+      const sep = '─'.repeat(25);
+      const cancelMsg =
+        '\n🚫 ยกเลิกการจอง\n' + sep + '\n' +
+        '🔑 ' + roomNumber + '\n' +
+        '👤 ' + info.guest + '\n' +
+        '📅 เช็คอิน ' + thaiDate(info.checkIn) + '\n' + sep;
+      await linePush(LINE_GROUP, cancelMsg);
+      console.log('แจ้งยกเลิกกลุ่มแม่บ้าน: ' + roomNumber + ' | ' + info.guest);
+      return;
+    }
 
     const today    = todayBKK();
     const tomorrow = tomorrowBKK();
