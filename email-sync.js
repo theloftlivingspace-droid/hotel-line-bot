@@ -35,7 +35,11 @@ const ROOM_TYPE_MAP = {
   "210": "Radiance",
   "214": "Legacy",
   "300": "Luxury",
+  "363": "Mycondo",  // Mycondo — Airbnb only, no maid group
 };
+
+// ห้องที่ไม่ต้องส่งกลุ่มแม่บ้าน
+const NO_MAID_ROOMS = new Set(["363"]);
 function getRoomLabel(num) {
   const type = ROOM_TYPE_MAP[String(num).trim()];
   return type ? num + " " + type : num;
@@ -455,7 +459,7 @@ async function handleLineReply(messageText, sourceId) {
     // วันนี้ → แจ้งทันที, พรุ่งนี้ + หลัง 19:00 → แจ้งทันที, พรุ่งนี้ + ก่อน 19:00 → รอ cron
     if (info.checkIn === today || (info.checkIn === tomorrow && hour >= 19)) {
       // ห้อง 363 (Mycondo) ไม่ส่งเข้ากลุ่มแม่บ้าน
-      if (!/\b363\b/.test(roomNumber)) {
+      if (!NO_MAID_ROOMS.has(String(roomNumber))) {
         await sendUrgentToGroup(roomNumber, info.guest, info.checkIn, info.note);
       }
     }
@@ -558,7 +562,9 @@ async function syncEmails() {
       await appendEmailLog(sheets, res);
 
       // auto-assign: เลือกห้องว่างใน type เดียวกัน, เลขห้องน้อยก่อน
-      const roomType     = getRoomTypeFromName(res.roomName || "");
+      // Mycondo 363: ถ้า roomName มี "363" หรือ "mycondo" → assign 363 ตรงๆ
+      const isMycondo = /363|mycondo/i.test(res.roomName || "") || /363|mycondo/i.test(res.listingTitle || "");
+      const roomType     = isMycondo ? "Mycondo" : getRoomTypeFromName(res.roomName || "");
       const candidateRooms = getRoomsOfType(roomType)
         .slice()
         .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
@@ -586,7 +592,7 @@ async function syncEmails() {
         const today = todayBKK(), tomorrow = tomorrowBKK(), hour = hourBKK();
         if (res.checkIn === today || (res.checkIn === tomorrow && hour >= 19)) {
           // ห้อง 363 (Mycondo) ไม่ส่งเข้ากลุ่มแม่บ้าน
-          if (!/\b363\b/.test(roomLabel)) {
+          if (!NO_MAID_ROOMS.has(String(assignedRoom))) {
             await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note);
           }
         }
