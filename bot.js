@@ -212,7 +212,7 @@ function filterByDate(rows, targetDate) {
     }
     if (!room || !guest) continue;
     // ห้อง 363 (Mycondo) ไม่ส่งเข้ากลุ่มแม่บ้าน
-    if (/\b363\b/.test(room)) continue;
+    if (/\b363\b/.test(String(room))) continue;  // ห้อง 363 (Mycondo) ไม่ส่งแม่บ้าน
     const isAirbnb = /ABB-/i.test(channel) || /airbnb/i.test(channel) ||
                      /ABB-/i.test(resId)   || /airbnb/i.test(resId);
     const displayNote = (!isAirbnb && note) ? note : "";
