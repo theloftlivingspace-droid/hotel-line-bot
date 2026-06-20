@@ -749,6 +749,12 @@ app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json({ limit: "20mb" }));
 app.get("/health", (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
+// ── Trigger email sync ทันที ──────────────────────────────────────────────
+app.post("/api/sync-email", adminAuth, async (req, res) => {
+  res.json({ ok: true, message: "sync started" });
+  try { await syncEmails(); } catch(e) { console.error("sync-email error:", e.message); }
+});
+
 // ─── Admin API ────────────────────────────────────────────────────
 app.get("/api/stats", adminAuth, async (req, res) => {
   const rooms = Object.values(await loadRooms()), users = await loadUsers();
