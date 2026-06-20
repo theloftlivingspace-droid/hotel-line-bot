@@ -338,6 +338,8 @@ function parseAirbnbDirectEmail(email) {
   const confIdx = combined.search(/Confirmation code/i);
   console.log("ABB debug: arriveIdx=" + arriveIdx + " checkOutIdx=" + checkOutIdx + " confIdx=" + confIdx);
   if (arriveIdx > 0) console.log("ABB debug: arriveSnip=" + combined.substring(arriveIdx, arriveIdx+60));
+  // Show 300 chars around Confirmation code
+  if (confIdx > 0) console.log("ABB debug: confSnip=" + combined.substring(Math.max(0,confIdx-100), confIdx+300));
 
   // ตรวจ listing ID — ถ้าไม่ใช่ Mycondo ให้ return null
   const listingMatch = combined.match(/(?:rooms?|listing)[\/?=]+(\d{6,})/i);
