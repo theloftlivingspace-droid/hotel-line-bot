@@ -301,12 +301,35 @@ function isoDate(str) {
 const MYCONDO_LISTING_IDS = new Set(["18163498", "17444947"]);
 
 function parseAirbnbDirectEmail(email) {
-  const body = extractText(email);
   const subject = email.subject || "";
-  const combined = subject + "\n" + body;
 
-  // ตรวจ listing ID ก่อน — ถ้าไม่ใช่ Mycondo ให้ return null
-  const listingMatch = combined.match(/room\/(\d+)/i);
+  // ตรวจ subject ก่อน — ต้องเป็น "Reservation confirmed" จาก Airbnb
+  if (!/Reservation confirmed/i.test(subject)) return null;
+
+  // ใช้ HTML body สำหรับ Airbnb (text body มีแค่ tracking pixel)
+  const textBody = email.text || "";
+  const rawHtml  = email.html || "";
+
+  // ดึง href URLs ออกมาก่อน strip tags (listing ID อยู่ใน href)
+  const hrefUrls = [];
+  rawHtml.replace(/href="([^"]+)"/gi, (_, url) => hrefUrls.push(url));
+
+  const htmlBody = rawHtml
+    ? rawHtml
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
+        .replace(/&amp;/gi, "&")
+        .replace(/&#x27;/gi, "'")
+        .replace(/\s+/g, " ").trim()
+    : "";
+
+  // รวม text + html + hrefs เพื่อให้ listing ID หาได้แน่นอน
+  const body = htmlBody.length > textBody.length ? htmlBody : textBody;
+  const combined = subject + "\n" + body + "\n" + hrefUrls.join("\n");
+
+  // ตรวจ listing ID — ถ้าไม่ใช่ Mycondo ให้ return null
+  const listingMatch = combined.match(/(?:rooms?|listing)[\/?=]+(\d{6,})/i);
   const listingId = listingMatch ? listingMatch[1] : null;
   if (!listingId || !MYCONDO_LISTING_IDS.has(listingId)) return null;
 
