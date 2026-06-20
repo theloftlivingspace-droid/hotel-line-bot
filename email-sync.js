@@ -554,7 +554,8 @@ function fetchEmails(since) {
       imap.openBox("INBOX", true, async (err) => {
         if (err) return reject(err);
 
-        const base = [["SINCE", since], ["FROM", "no-reply@app.littlehotelier.com"]];
+        const baseLH  = [["SINCE", since], ["FROM", "no-reply@app.littlehotelier.com"]];
+        const baseABB = [["SINCE", since], ["FROM", "automated@airbnb.com"]];
 
         // search EN and TH subjects in parallel (both over same open connection sequentially)
         const search = (criteria) => new Promise((res, rej) =>
@@ -562,14 +563,15 @@ function fetchEmails(since) {
         );
 
         try {
-          const [uidsEn, uidsTh] = await Promise.all([
-            search([...base, ["SUBJECT", "New Reservation"]]),
-            search([...base, ["SUBJECT", "การจองใหม่"]]),
+          const [uidsEn, uidsTh, uidsAbb] = await Promise.all([
+            search([...baseLH,  ["SUBJECT", "New Reservation"]]),
+            search([...baseLH,  ["SUBJECT", "การจองใหม่"]]),
+            search([...baseABB, ["SUBJECT", "Reservation confirmed"]]),
           ]);
 
           // merge + deduplicate uid lists
-          const allUids = [...new Set([...uidsEn, ...uidsTh])];
-          console.log(`พบอีเมล: EN=${uidsEn.length} TH=${uidsTh.length} รวม=${allUids.length} ฉบับ`);
+          const allUids = [...new Set([...uidsEn, ...uidsTh, ...uidsAbb])];
+          console.log(`พบอีเมล: LH-EN=${uidsEn.length} LH-TH=${uidsTh.length} ABB363=${uidsAbb.length} รวม=${allUids.length} ฉบับ`);
 
           if (allUids.length === 0) { console.log("ไม่พบอีเมลใหม่"); imap.end(); return resolve([]); }
 
