@@ -338,10 +338,11 @@ function parseAirbnbDirectEmail(email) {
   const confIdx = combined.search(/Confirmation code/i);
   console.log("ABB debug: arriveIdx=" + arriveIdx + " checkOutIdx=" + checkOutIdx + " confIdx=" + confIdx);
   if (arriveIdx > 0) console.log("ABB debug: arriveSnip=" + combined.substring(arriveIdx, arriveIdx+60));
-  // Dump raw text body sections to find date format
+  // Dump full text body in chunks to find date format
   if (MYCONDO_LISTING_IDS.has(listingId)) {
-    console.log("ABB text[0:500]=" + textBody.substring(0, 500));
-    console.log("ABB text[500:1000]=" + textBody.substring(500, 1000));
+    for (let i = 0; i < Math.min(textBody.length, 4500); i += 500) {
+      console.log("ABB text[" + i + ":" + (i+500) + "]=" + textBody.substring(i, i+500));
+    }
   }
 
   // ตรวจ listing ID — ถ้าไม่ใช่ Mycondo ให้ return null
