@@ -303,8 +303,7 @@ const MYCONDO_LISTING_IDS = new Set(["18163498", "17444947"]);
 function parseAirbnbDirectEmail(email) {
   const body = extractText(email);
   const subject = email.subject || "";
-  const combined = subject + "
-" + body;
+  const combined = subject + "\n" + body;
 
   // ตรวจ listing ID ก่อน — ถ้าไม่ใช่ Mycondo ให้ return null
   const listingMatch = combined.match(/room\/(\d+)/i);
