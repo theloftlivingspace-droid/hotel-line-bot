@@ -454,7 +454,10 @@ async function handleLineReply(messageText, sourceId) {
 
     // วันนี้ → แจ้งทันที, พรุ่งนี้ + หลัง 19:00 → แจ้งทันที, พรุ่งนี้ + ก่อน 19:00 → รอ cron
     if (info.checkIn === today || (info.checkIn === tomorrow && hour >= 19)) {
-      await sendUrgentToGroup(roomNumber, info.guest, info.checkIn, info.note);
+      // ห้อง 363 (Mycondo) ไม่ส่งเข้ากลุ่มแม่บ้าน
+      if (!/\b363\b/.test(roomNumber)) {
+        await sendUrgentToGroup(roomNumber, info.guest, info.checkIn, info.note);
+      }
     }
   } catch (err) {
     console.error("reply error: " + err.message);
@@ -582,7 +585,10 @@ async function syncEmails() {
         console.log("auto-assign: " + res.resId + " -> " + roomLabel);
         const today = todayBKK(), tomorrow = tomorrowBKK(), hour = hourBKK();
         if (res.checkIn === today || (res.checkIn === tomorrow && hour >= 19)) {
-          await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note);
+          // ห้อง 363 (Mycondo) ไม่ส่งเข้ากลุ่มแม่บ้าน
+          if (!/\b363\b/.test(roomLabel)) {
+            await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note);
+          }
         }
         await sendNewBookingToAdmin(res, roomLabel);
       } else if (candidateRooms.length >= 1) {
