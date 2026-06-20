@@ -279,12 +279,62 @@ function isoDate(str) {
     "พฤษภาคม":5, "มิถุนายน":6, "กรกฎาคม":7, "สิงหาคม":8,
     "กันยายน":9, "ตุลาคม":10, "พฤศจิกายน":11, "ธันวาคม":12,
   };
-  const clean = str.replace(/(\d+)(st|nd|rd|th)/i, "$1").trim();
+  const clean = str.replace(/(\d+)(st|nd|rd|th)/i, "$1").replace(/,/g, "").trim();
   const parts = clean.split(/\s+/);
+  // รองรับ "Month DD YYYY" (Airbnb format) และ "DD Month YYYY" (Little Hotelier format)
+  if (months[parts[0].toLowerCase()]) {
+    const mon = months[parts[0].toLowerCase()];
+    const day = parseInt(parts[1]);
+    const year = parts[2] ? parseInt(parts[2]) : new Date().getFullYear();
+    if (day && mon) return year + "-" + String(mon).padStart(2,"0") + "-" + String(day).padStart(2,"0");
+  }
   const day = parseInt(parts[0]), mon = months[(parts[1]||"").toLowerCase()] || months[parts[1]];
   const year = parts[2] ? parseInt(parts[2]) : new Date().getFullYear();
   if (!day || !mon) return null;
   return year + "-" + String(mon).padStart(2,"0") + "-" + String(day).padStart(2,"0");
+}
+
+// ─────────────────────────────────────────────
+// Airbnb Direct Email Parser (ห้อง 363 Mycondo)
+// Listing IDs ของ 363 Mycondo บน Airbnb: 18163498, 17444947
+// ─────────────────────────────────────────────
+const MYCONDO_LISTING_IDS = new Set(["18163498", "17444947"]);
+
+function parseAirbnbDirectEmail(email) {
+  const body = extractText(email);
+  const subject = email.subject || "";
+  const combined = subject + "
+" + body;
+
+  // ตรวจ listing ID ก่อน — ถ้าไม่ใช่ Mycondo ให้ return null
+  const listingMatch = combined.match(/room\/(\d+)/i);
+  const listingId = listingMatch ? listingMatch[1] : null;
+  if (!listingId || !MYCONDO_LISTING_IDS.has(listingId)) return null;
+
+  // Guest name จาก subject: "Reservation confirmed - {Name} arrives {month} {day}"
+  const guestMatch = subject.match(/Reservation confirmed\s*[-–]\s*(.+?)\s+arrives/i);
+  const guest = guestMatch ? guestMatch[1].trim() : null;
+
+  // Confirmation code
+  const confMatch = combined.match(/Confirmation code[:\s]+([A-Z0-9]{8,12})/i);
+  const confCode = confMatch ? confMatch[1] : null;
+
+  // Check-in: "will arrive on {Month} {DD}, {YYYY}"
+  const inMatch = combined.match(/will arrive on ([A-Za-z]+ \d{1,2},?\s*\d{4})/i);
+  const checkIn = inMatch ? isoDate(inMatch[1]) : null;
+
+  // Check-out: "check out on {Month} {DD}, {YYYY}"
+  const outMatch = combined.match(/check out on ([A-Za-z]+ \d{1,2},?\s*\d{4})/i);
+  const checkOut = outMatch ? isoDate(outMatch[1]) : null;
+
+  if (!guest || !checkIn || !checkOut) {
+    console.log("❌ parseAirbnbDirect FAIL: listing=" + listingId + " guest=" + guest + " in=" + checkIn + " out=" + checkOut);
+    return null;
+  }
+
+  const resId = confCode ? "ABB-" + confCode : "ABB-363-" + checkIn.replace(/-/g,"");
+  console.log("✅ parseAirbnbDirect OK: " + resId + " | " + guest + " | " + checkIn + " -> " + checkOut);
+  return { resId, guest, roomName: "363", checkIn, checkOut, channel: "Airbnb", isAirbnb: true, note: "" };
 }
 
 // แปลงวันที่ใน Sheet → ISO (รองรับทั้ง YYYY-MM-DD และ DD/MM/YYYY)
@@ -311,6 +361,10 @@ function normalizeChannel(rawChannel, subject, body) {
 }
 
 function parseEmail(email) {
+  // ── ลอง Airbnb direct parser ก่อน (363 Mycondo) ────────────────────────
+  const airbnbDirect = parseAirbnbDirectEmail(email);
+  if (airbnbDirect) return airbnbDirect;
+
   const body = extractText(email);
   const subject = email.subject || "";
   if (!body || body.length < 20) return null;
