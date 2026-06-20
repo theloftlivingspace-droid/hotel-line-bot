@@ -338,12 +338,10 @@ function parseAirbnbDirectEmail(email) {
   const confIdx = combined.search(/Confirmation code/i);
   console.log("ABB debug: arriveIdx=" + arriveIdx + " checkOutIdx=" + checkOutIdx + " confIdx=" + confIdx);
   if (arriveIdx > 0) console.log("ABB debug: arriveSnip=" + combined.substring(arriveIdx, arriveIdx+60));
-  // Show text body around confirmation code (not HTML — text is smaller and more readable)
-  const textConfIdx = textBody.search(/Confirmation code/i);
-  if (textConfIdx >= 0) {
-    console.log("ABB debug: textSnip=" + textBody.substring(Math.max(0,textConfIdx-200), textConfIdx+400));
-  } else {
-    console.log("ABB debug: no conf in text, showing text[3000:3400]=" + textBody.substring(3000, 3400));
+  // Dump raw text body sections to find date format
+  if (MYCONDO_LISTING_IDS.has(listingId)) {
+    console.log("ABB text[0:500]=" + textBody.substring(0, 500));
+    console.log("ABB text[500:1000]=" + textBody.substring(500, 1000));
   }
 
   // ตรวจ listing ID — ถ้าไม่ใช่ Mycondo ให้ return null
