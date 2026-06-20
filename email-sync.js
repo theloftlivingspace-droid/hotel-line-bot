@@ -332,6 +332,12 @@ function parseAirbnbDirectEmail(email) {
   console.log("ABB debug: subject=" + subject.substring(0,60));
   console.log("ABB debug: textLen=" + textBody.length + " htmlLen=" + rawHtml.length + " hrefs=" + hrefUrls.length);
   console.log("ABB debug: combined200=" + combined.substring(0,200));
+  // Search for date pattern position
+  const arriveIdx = combined.search(/will arrive on/i);
+  const checkOutIdx = combined.search(/check out on/i);
+  const confIdx = combined.search(/Confirmation code/i);
+  console.log("ABB debug: arriveIdx=" + arriveIdx + " checkOutIdx=" + checkOutIdx + " confIdx=" + confIdx);
+  if (arriveIdx > 0) console.log("ABB debug: arriveSnip=" + combined.substring(arriveIdx, arriveIdx+60));
 
   // ตรวจ listing ID — ถ้าไม่ใช่ Mycondo ให้ return null
   const listingMatch = combined.match(/(?:rooms?|listing)[\/?=]+(\d{6,})/i);
