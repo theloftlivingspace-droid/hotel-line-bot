@@ -328,6 +328,11 @@ function parseAirbnbDirectEmail(email) {
   const body = htmlBody.length > textBody.length ? htmlBody : textBody;
   const combined = subject + "\n" + body + "\n" + hrefUrls.join("\n");
 
+  // Debug: log ขนาด body เพื่อ diagnose
+  console.log("ABB debug: subject=" + subject.substring(0,60));
+  console.log("ABB debug: textLen=" + textBody.length + " htmlLen=" + rawHtml.length + " hrefs=" + hrefUrls.length);
+  console.log("ABB debug: combined200=" + combined.substring(0,200));
+
   // ตรวจ listing ID — ถ้าไม่ใช่ Mycondo ให้ return null
   const listingMatch = combined.match(/(?:rooms?|listing)[\/?=]+(\d{6,})/i);
   const listingId = listingMatch ? listingMatch[1] : null;
