@@ -395,8 +395,7 @@ function parseAirbnbDirectEmail(email) {
     return null;
   }
 
-  const bookingDate = new Date().toISOString().slice(0,10).replace(/-/g,"");
-  const resId = confCode ? "ABB-" + confCode + "-" + bookingDate : "ABB-363-" + checkIn.replace(/-/g,"");
+  const resId = confCode ? "ABB-" + confCode + "-" + checkIn.replace(/-/g,"") : "ABB-363-" + checkIn.replace(/-/g,"");
   console.log("✅ parseAirbnbDirect OK: " + resId + " | " + guest + " | " + checkIn + " -> " + checkOut);
   return { resId, guest, roomName: "363", checkIn, checkOut, channel: "Airbnb", isAirbnb: true, note: "" };
 }
