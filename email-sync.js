@@ -20,6 +20,7 @@ const LINE_GROUP   = process.env.LINE_GROUP_ID;
 const ADMIN_ID     = process.env.ADMIN_USER_ID; // ไลน์ส่วนตัวแอดมิน
 const SHEET_ID     = process.env.GOOGLE_SHEET_ID;
 const SHEET_NAME   = process.env.GOOGLE_SHEET_NAME || "Sheet1";
+const GAS_STYLE_URL = "https://script.google.com/macros/s/AKfycbz3r-wEAImmD3jJUhTE58Z6IOQV_R1Q0iYs5imf8l4f5EUqZEdIKjQJzF4HuENgiJ4/exec";
 
 // ─────────────────────────────────────────────
 // Room type map
@@ -88,6 +89,22 @@ function getSheets() {
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
   return google.sheets({ version: "v4", auth });
+}
+
+// ─────────────────────────────────────────────
+// Trigger styleSheet1 ใน GAS (sort + format Sheet1)
+// ─────────────────────────────────────────────
+async function triggerStyleSheet1() {
+  try {
+    await axios.post(GAS_STYLE_URL, { action: "styleSheet1" }, {
+      headers: { "Content-Type": "application/json" },
+      maxRedirects: 5,
+      timeout: 30000,
+    });
+    console.log("styleSheet1: triggered OK");
+  } catch (e) {
+    console.error("styleSheet1: trigger failed:", e.message);
+  }
 }
 
 async function getEmailLog(sheets) {
@@ -696,6 +713,7 @@ async function syncEmails() {
       newCount++;
     }
     console.log("ตรวจเสร็จ (ใหม่ " + newCount + " รายการ)");
+    if (newCount > 0) await triggerStyleSheet1();
   } catch (err) {
     console.error("sync error: " + err.message);
   }
