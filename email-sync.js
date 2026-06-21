@@ -636,7 +636,7 @@ async function syncEmails() {
     console.log("email_log: " + notifiedIds.size + " รายการ");
 
     const since = new Date();
-    since.setDate(since.getDate() - 7);
+    since.setMonth(since.getMonth() - 4);
     const emails = await fetchEmails(since);
 
     let newCount = 0;
