@@ -329,32 +329,28 @@ function parseAirbnbDirectEmail(email) {
         .replace(/\s+/g, " ").trim()
     : "";
 
-  // รวม text + html + hrefs เพื่อให้ listing ID หาได้แน่นอน
-  const body = htmlBody.length > textBody.length ? htmlBody : textBody;
-  const combined = subject + "\n" + body + "\n" + hrefUrls.join("\n");
+  // combined = subject + text + hrefs (text body มีวันที่, hrefs มี listing ID)
+  const combined = subject + "\n" + textBody + "\n" + hrefUrls.join("\n");
 
-  // Debug: log ขนาด body เพื่อ diagnose
-
-
-  // ตรวจ listing ID — ถ้าไม่ใช่ Mycondo ให้ return null
+  // ตรวจ listing ID จาก hrefs — ถ้าไม่ใช่ Mycondo ให้ return null
   const listingMatch = combined.match(/(?:rooms?|listing)[\/?=]+(\d{6,})/i);
   const listingId = listingMatch ? listingMatch[1] : null;
   if (!listingId || !MYCONDO_LISTING_IDS.has(listingId)) return null;
 
-  // Guest name จาก subject: "Reservation confirmed - {Name} arrives {month} {day}"
+  // Guest name จาก subject
   const guestMatch = subject.match(/Reservation confirmed\s*[-–]\s*(.+?)\s+arrives/i);
   const guest = guestMatch ? guestMatch[1].trim() : null;
 
-  // Confirmation code
-  const confMatch = combined.match(/Confirmation code[:\s]+([A-Z0-9]{8,12})/i);
+  // Confirmation code — text body ใช้ "CONFIRMATION CODE\nXXXX" (all caps, newline)
+  const confMatch = combined.match(/CONFIRMATION CODE\s+([A-Z0-9]{6,12})/i)
+                 || combined.match(/Confirmation code[:\s]+([A-Z0-9]{6,12})/i);
   const confCode = confMatch ? confMatch[1] : null;
 
-  // Check-in/out: Airbnb text email format:
-  // "Check-in      Checkout\nSat, Jun 20   Sun, Jul 12"
+  // วันที่จาก text body: "Sat, Jun 20   Sun, Jul 12"
   const dateLineMatch = combined.match(
     /(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+([A-Za-z]+ \d{1,2})\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+([A-Za-z]+ \d{1,2})/
   );
-  // Fallback: "will arrive on Month DD, YYYY"
+  // Fallback
   const inMatchFb  = combined.match(/will arrive on ([A-Za-z]+ \d{1,2},?\s*\d{0,4})/i);
   const outMatchFb = combined.match(/check out on ([A-Za-z]+ \d{1,2},?\s*\d{0,4})/i);
 
