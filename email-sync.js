@@ -366,16 +366,29 @@ function parseAirbnbDirectEmail(email) {
                  || combined.match(/Confirmation code[:\s]+([A-Z0-9]{6,12})/i);
   const confCode = confMatch ? confMatch[1] : null;
 
-  // วันที่จาก text body: "Sat, Jun 20   Sun, Jul 12"
+  // วันที่จาก HTML: <...class="heading2...">Sat, Jun 20<  และ  >Sun, Jul 12<
+  // Airbnb email มี 2 วัน (checkin, checkout) ใน format "Day, Mon DD"
+  const htmlDates = [];
+  rawHtml.replace(/>((Mon|Tue|Wed|Thu|Fri|Sat|Sun), (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2})</g,
+    (_, d) => htmlDates.push(d));
+  // Fallback: text body / combined
   const dateLineMatch = combined.match(
     /(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+([A-Za-z]+ \d{1,2})\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+([A-Za-z]+ \d{1,2})/
   );
-  // Fallback
   const inMatchFb  = combined.match(/will arrive on ([A-Za-z]+ \d{1,2},?\s*\d{0,4})/i);
   const outMatchFb = combined.match(/check out on ([A-Za-z]+ \d{1,2},?\s*\d{0,4})/i);
 
-  const checkIn  = dateLineMatch ? isoDate(dateLineMatch[1]) : (inMatchFb  ? isoDate(inMatchFb[1])  : null);
-  const checkOut = dateLineMatch ? isoDate(dateLineMatch[2]) : (outMatchFb ? isoDate(outMatchFb[1]) : null);
+  let checkIn, checkOut;
+  if (htmlDates.length >= 2) {
+    checkIn  = isoDate(htmlDates[0]);
+    checkOut = isoDate(htmlDates[1]);
+  } else if (dateLineMatch) {
+    checkIn  = isoDate(dateLineMatch[1]);
+    checkOut = isoDate(dateLineMatch[2]);
+  } else {
+    checkIn  = inMatchFb  ? isoDate(inMatchFb[1])  : null;
+    checkOut = outMatchFb ? isoDate(outMatchFb[1]) : null;
+  }
 
   if (!guest || !checkIn || !checkOut) {
     console.log("❌ parseAirbnbDirect FAIL: listing=" + listingId + " guest=" + guest + " in=" + checkIn + " out=" + checkOut);
