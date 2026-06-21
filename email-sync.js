@@ -130,14 +130,15 @@ async function appendEmailLog(sheets, res) {
 }
 
 async function addPendingRow(sheets, res) {
-  // A=รอยืนยัน B=ชื่อแขก C=เช็คอิน D=เช็คเอาท์ E=channel F=resId G=note
+  // A=รอยืนยัน B=ชื่อแขก C=เช็คอิน D=เช็คเอาท์ E=channel F=resId G=note H=วันจอง
+  const bookingDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:G",
+    range: SHEET_NAME + "!A:H",
     valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
-      values: [["รอยืนยัน", res.guest, res.checkIn, res.checkOut, res.channel, res.resId, res.note]],
+      values: [["รอยืนยัน", res.guest, res.checkIn, res.checkOut, res.channel, res.resId, res.note, bookingDate]],
     },
   });
 }
