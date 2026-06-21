@@ -281,15 +281,20 @@ function isoDate(str) {
   };
   const clean = str.replace(/(\d+)(st|nd|rd|th)/i, "$1").replace(/,/g, "").trim();
   const parts = clean.split(/\s+/);
-  // รองรับ "Month DD YYYY" (Airbnb format) และ "DD Month YYYY" (Little Hotelier format)
-  if (months[parts[0].toLowerCase()]) {
-    const mon = months[parts[0].toLowerCase()];
+  const thisYear = new Date().getFullYear();
+  // รองรับ "Month DD [YYYY]" (Airbnb: "Jun 20" หรือ "June 20, 2026") และ "DD Month YYYY"
+  const shortMonth = (s) => {
+    const m = months[s.toLowerCase()] || months[s.toLowerCase().substring(0,3)];
+    return m || null;
+  };
+  if (shortMonth(parts[0])) {
+    const mon = shortMonth(parts[0]);
     const day = parseInt(parts[1]);
-    const year = parts[2] ? parseInt(parts[2]) : new Date().getFullYear();
+    const year = parts[2] ? parseInt(parts[2]) : thisYear;
     if (day && mon) return year + "-" + String(mon).padStart(2,"0") + "-" + String(day).padStart(2,"0");
   }
   const day = parseInt(parts[0]), mon = months[(parts[1]||"").toLowerCase()] || months[parts[1]];
-  const year = parts[2] ? parseInt(parts[2]) : new Date().getFullYear();
+  const year = parts[2] ? parseInt(parts[2]) : thisYear;
   if (!day || !mon) return null;
   return year + "-" + String(mon).padStart(2,"0") + "-" + String(day).padStart(2,"0");
 }
@@ -329,21 +334,7 @@ function parseAirbnbDirectEmail(email) {
   const combined = subject + "\n" + body + "\n" + hrefUrls.join("\n");
 
   // Debug: log ขนาด body เพื่อ diagnose
-  console.log("ABB debug: subject=" + subject.substring(0,60));
-  console.log("ABB debug: textLen=" + textBody.length + " htmlLen=" + rawHtml.length + " hrefs=" + hrefUrls.length);
-  console.log("ABB debug: combined200=" + combined.substring(0,200));
-  // Search for date pattern position
-  const arriveIdx = combined.search(/will arrive on/i);
-  const checkOutIdx = combined.search(/check out on/i);
-  const confIdx = combined.search(/Confirmation code/i);
-  console.log("ABB debug: arriveIdx=" + arriveIdx + " checkOutIdx=" + checkOutIdx + " confIdx=" + confIdx);
-  if (arriveIdx > 0) console.log("ABB debug: arriveSnip=" + combined.substring(arriveIdx, arriveIdx+60));
-  // Dump full text body in chunks to find date format
-  if (MYCONDO_LISTING_IDS.has(listingId)) {
-    for (let i = 0; i < Math.min(textBody.length, 4500); i += 500) {
-      console.log("ABB text[" + i + ":" + (i+500) + "]=" + textBody.substring(i, i+500));
-    }
-  }
+
 
   // ตรวจ listing ID — ถ้าไม่ใช่ Mycondo ให้ return null
   const listingMatch = combined.match(/(?:rooms?|listing)[\/?=]+(\d{6,})/i);
@@ -358,13 +349,17 @@ function parseAirbnbDirectEmail(email) {
   const confMatch = combined.match(/Confirmation code[:\s]+([A-Z0-9]{8,12})/i);
   const confCode = confMatch ? confMatch[1] : null;
 
-  // Check-in: "will arrive on {Month} {DD}, {YYYY}"
-  const inMatch = combined.match(/will arrive on ([A-Za-z]+ \d{1,2},?\s*\d{4})/i);
-  const checkIn = inMatch ? isoDate(inMatch[1]) : null;
+  // Check-in/out: Airbnb text email format:
+  // "Check-in      Checkout\nSat, Jun 20   Sun, Jul 12"
+  const dateLineMatch = combined.match(
+    /(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+([A-Za-z]+ \d{1,2})\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+([A-Za-z]+ \d{1,2})/
+  );
+  // Fallback: "will arrive on Month DD, YYYY"
+  const inMatchFb  = combined.match(/will arrive on ([A-Za-z]+ \d{1,2},?\s*\d{0,4})/i);
+  const outMatchFb = combined.match(/check out on ([A-Za-z]+ \d{1,2},?\s*\d{0,4})/i);
 
-  // Check-out: "check out on {Month} {DD}, {YYYY}"
-  const outMatch = combined.match(/check out on ([A-Za-z]+ \d{1,2},?\s*\d{4})/i);
-  const checkOut = outMatch ? isoDate(outMatch[1]) : null;
+  const checkIn  = dateLineMatch ? isoDate(dateLineMatch[1]) : (inMatchFb  ? isoDate(inMatchFb[1])  : null);
+  const checkOut = dateLineMatch ? isoDate(dateLineMatch[2]) : (outMatchFb ? isoDate(outMatchFb[1]) : null);
 
   if (!guest || !checkIn || !checkOut) {
     console.log("❌ parseAirbnbDirect FAIL: listing=" + listingId + " guest=" + guest + " in=" + checkIn + " out=" + checkOut);
