@@ -131,14 +131,16 @@ async function appendEmailLog(sheets, res) {
 
 async function addPendingRow(sheets, res) {
   // A=รอยืนยัน B=ชื่อแขก C=เช็คอิน D=เช็คเอาท์ E=channel F=resId G=note H=วันจอง
-  const bookingDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const bookingDate = todayBKK(); // YYYY-MM-DD Bangkok time
+  const ci = (res.checkIn  instanceof Date) ? res.checkIn.toISOString().slice(0,10)  : String(res.checkIn  || '');
+  const co = (res.checkOut instanceof Date) ? res.checkOut.toISOString().slice(0,10) : String(res.checkOut || '');
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
     range: SHEET_NAME + "!A:H",
     valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
-      values: [["รอยืนยัน", res.guest, res.checkIn, res.checkOut, res.channel, res.resId, res.note, bookingDate]],
+      values: [["รอยืนยัน", res.guest, ci, co, res.channel, res.resId, res.note, bookingDate]],
     },
   });
 }
@@ -293,7 +295,7 @@ function isoDate(str) {
     january:1, february:2, march:3, april:4, may:5, june:6,
     july:7, august:8, september:9, october:10, november:11, december:12,
     // English short (Airbnb format: "Jun 20", "Jul 12")
-    jan:1, feb:2, mar:3, apr:4, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12,
+    jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12,
     // Thai
     "มกราคม":1, "กุมภาพันธ์":2, "มีนาคม":3, "เมษายน":4,
     "พฤษภาคม":5, "มิถุนายน":6, "กรกฎาคม":7, "สิงหาคม":8,
