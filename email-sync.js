@@ -129,16 +129,17 @@ async function appendEmailLog(sheets, res) {
   });
 }
 
-async function addPendingRow(sheets, res) {
+async function addPendingRow(sheets, res, bookingDate) {
   // A=รอยืนยัน B=ชื่อแขก C=เช็คอิน D=เช็คเอาท์ E=channel F=resId G=note H=วันจอง
-  const bookingDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  // bookingDate ควรมาจาก email.date (วันที่ LH ส่ง New Reservation email = วันที่แขกจองจริง)
+  const bDate = bookingDate || new Date().toISOString().slice(0, 10);
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
     range: SHEET_NAME + "!A:H",
     valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
-      values: [["รอยืนยัน", res.guest, res.checkIn, res.checkOut, res.channel, res.resId, res.note, bookingDate]],
+      values: [["รอยืนยัน", res.guest, res.checkIn, res.checkOut, res.channel, res.resId, res.note, bDate]],
     },
   });
 }
@@ -682,7 +683,11 @@ async function syncEmails() {
       if (!res) continue;
       if (notifiedIds.has(res.resId)) { console.log("แจ้งไปแล้ว: " + res.resId); continue; }
 
-      await addPendingRow(sheets, res);
+      // วันจอง = วันที่ LH ส่ง New Reservation email (= วันที่แขกจองจริง)
+      const emailBookingDate = email.date
+        ? new Date(email.date).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+      await addPendingRow(sheets, res, emailBookingDate);
       await appendEmailLog(sheets, res);
 
       // auto-assign: เลือกห้องว่างใน type เดียวกัน, เลขห้องน้อยก่อน
