@@ -677,6 +677,16 @@ async function syncEmails() {
       if (!res) continue;
       if (notifiedIds.has(res.resId)) { console.log("แจ้งไปแล้ว: " + res.resId); continue; }
 
+      // ตรวจ Sheet1 col F (resId) โดยตรง — กัน duplicate กรณี email_log ไม่ครบ
+      const sheet1Rows = await sheets.spreadsheets.values.get({
+        spreadsheetId: SHEET_ID, range: SHEET_NAME + "!F:F"
+      }).then(r => (r.data.values || []).flat()).catch(() => []);
+      if (sheet1Rows.includes(res.resId)) {
+        console.log("มีใน Sheet1 แล้ว (skip): " + res.resId);
+        await appendEmailLog(sheets, res); // sync log ให้ตรง
+        continue;
+      }
+
       await addPendingRow(sheets, res);
       await appendEmailLog(sheets, res);
 
