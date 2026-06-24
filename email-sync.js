@@ -372,12 +372,19 @@ function parseAirbnbDirectEmail(email) {
   const htmlDates = [];
   rawHtml.replace(/>((Mon|Tue|Wed|Thu|Fri|Sat|Sun), (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2})</g,
     (_, d) => htmlDates.push(d));
-  // Fallback: text body / combined
+  // Fallback 1: text body / combined สองวันติดกัน
   const dateLineMatch = combined.match(
     /(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+([A-Za-z]+ \d{1,2})\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+([A-Za-z]+ \d{1,2})/
   );
+  // Fallback 2: "will arrive on" / "check out on"
   const inMatchFb  = combined.match(/will arrive on ([A-Za-z]+ \d{1,2},?\s*\d{0,4})/i);
   const outMatchFb = combined.match(/check out on ([A-Za-z]+ \d{1,2},?\s*\d{0,4})/i);
+  // Fallback 3: subject "arrives MMM DD" — ได้แค่ checkin (checkout จาก htmlBody ถ้ามี)
+  const subjectInMatch = subject.match(/arrives\s+([A-Za-z]+ \d{1,2})/i);
+  // Fallback 4: htmlBody stripped text — ดึงวันที่คู่จาก "Mon DD - Mon DD" หรือ "Mon DD to Mon DD"
+  const htmlBodyDates = [];
+  htmlBody.replace(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\b/gi,
+    (_, m, d) => htmlBodyDates.push(m + " " + d));
 
   let checkIn, checkOut;
   if (htmlDates.length >= 2) {
@@ -386,9 +393,21 @@ function parseAirbnbDirectEmail(email) {
   } else if (dateLineMatch) {
     checkIn  = isoDate(dateLineMatch[1]);
     checkOut = isoDate(dateLineMatch[2]);
+  } else if (inMatchFb && outMatchFb) {
+    checkIn  = isoDate(inMatchFb[1]);
+    checkOut = isoDate(outMatchFb[1]);
+  } else if (htmlBodyDates.length >= 2) {
+    checkIn  = isoDate(htmlBodyDates[0]);
+    checkOut = isoDate(htmlBodyDates[1]);
+  } else if (subjectInMatch) {
+    // มีแค่ checkin จาก subject — ดึง checkout จาก htmlBody วันแรกที่ต่างจาก checkin
+    checkIn = isoDate(subjectInMatch[1]);
+    const ci = checkIn;
+    const coCandidate = htmlBodyDates.find(d => isoDate(d) && isoDate(d) !== ci);
+    checkOut = coCandidate ? isoDate(coCandidate) : null;
   } else {
-    checkIn  = inMatchFb  ? isoDate(inMatchFb[1])  : null;
-    checkOut = outMatchFb ? isoDate(outMatchFb[1]) : null;
+    checkIn  = null;
+    checkOut = null;
   }
 
   if (!guest || !checkIn || !checkOut) {

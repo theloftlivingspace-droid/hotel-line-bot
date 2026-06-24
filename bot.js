@@ -49,12 +49,12 @@ async function getQuotaRemaining(token) {
     const res = await fetch("https://api.line.me/v2/bot/message/quota/consumption", {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return 0;
+    if (!res.ok) return null; // null = API error (ไม่รู้ quota จริง)
     const d = await res.json();
     const FREE_QUOTA = 300;
     return Math.max(0, FREE_QUOTA - (d.totalUsage || 0));
   } catch {
-    return 0;
+    return null; // null = ไม่รู้ อย่า fallback
   }
 }
 
@@ -77,12 +77,20 @@ async function linePush(to, messages) {
     return linePushWithToken(to, messages, LINE_TOKEN);
   }
   const remaining = await getQuotaRemaining(LINE_TOKEN);
-  if (remaining > 0) {
-    console.log(`[LINE] quota เหลือ ${remaining} — ใช้ OA หลัก`);
-    return linePushWithToken(to, messages, LINE_TOKEN);
+  // null = ไม่รู้ quota (API error) → ลองส่งหลักก่อน แล้วค่อย fallback ถ้า fail
+  if (remaining === null || remaining > 0) {
+    try {
+      if (remaining !== null) console.log(`[LINE] quota เหลือ ${remaining} — ใช้ OA หลัก`);
+      return await linePushWithToken(to, messages, LINE_TOKEN);
+    } catch (err) {
+      const isQuotaErr = err.message && err.message.includes("monthly limit");
+      if (!isQuotaErr) throw err; // error อื่น → throw ต่อ
+      console.warn(`[LINE] OA หลัก quota หมด (caught) — fallback ไป OA สำรอง`);
+    }
+  } else {
+    console.warn(`[LINE] quota OA หลักหมด (${remaining}) — fallback ไป OA สำรอง`);
   }
   const target = (to === LINE_GROUP && LINE_GROUP_BACKUP) ? LINE_GROUP_BACKUP : to;
-  console.warn(`[LINE] quota OA หลักหมด — fallback ไป OA สำรอง (group: ${target})`);
   return linePushWithToken(target, messages, LINE_TOKEN_BACKUP);
 }
 async function lineReply(replyToken, messages) {
