@@ -209,6 +209,7 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
 // ─────────────────────────────────────────────
 const LINE_TOKEN_BACKUP = process.env.LINE_CHANNEL_ACCESS_TOKEN_BACKUP || "";
 const LINE_GROUP_BACKUP = process.env.LINE_GROUP_ID_BACKUP || "";
+const ADMIN_ID_BACKUP   = process.env.ADMIN_USER_ID_BACKUP || "";
 
 async function linePushWithToken(to, text, token) {
   const res = await axios.post(
@@ -227,7 +228,9 @@ async function linePush(to, text) {
     const isQuotaErr = e.response?.data?.message?.includes("monthly limit");
     if (isQuotaErr && LINE_TOKEN_BACKUP) {
       console.warn("[LINE] quota หมด — fallback ไป OA สำรอง");
-      const target = (to === LINE_GROUP && LINE_GROUP_BACKUP) ? LINE_GROUP_BACKUP : to;
+      const target = (to === LINE_GROUP && LINE_GROUP_BACKUP) ? LINE_GROUP_BACKUP
+                  : (to === ADMIN_ID && ADMIN_ID_BACKUP) ? ADMIN_ID_BACKUP
+                  : to;
       try {
         await linePushWithToken(target, text, LINE_TOKEN_BACKUP);
       } catch (e2) {
