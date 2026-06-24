@@ -26,9 +26,11 @@ const cron    = require("node-cron");
 const { google } = require("googleapis");
 
 // ─── ENV ────────────────────────────────────────────────────────
-const LINE_TOKEN    = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
-const LINE_SECRET   = process.env.LINE_CHANNEL_SECRET       || "";
-const LINE_GROUP    = process.env.LINE_GROUP_ID             || "";   // กลุ่มแม่บ้าน (ยังใช้สำหรับสรุปประจำวัน)
+const LINE_TOKEN    = process.env.LINE_CHANNEL_ACCESS_TOKEN        || "";
+const LINE_TOKEN_BACKUP = process.env.LINE_CHANNEL_ACCESS_TOKEN_BACKUP || ""; // OA สำรองเมื่อ quota หมด
+const LINE_SECRET   = process.env.LINE_CHANNEL_SECRET               || "";
+const LINE_GROUP    = process.env.LINE_GROUP_ID                     || "";   // กลุ่มแม่บ้าน (ยังใช้สำหรับสรุปประจำวัน)
+const LINE_GROUP_BACKUP = process.env.LINE_GROUP_ID_BACKUP          || "";   // กลุ่มแม่บ้านที่เพิ่ม OA สำรองไว้ด้วย
 const ADMIN_USER    = process.env.ADMIN_USER_ID             || "";   // LINE User ID แอดมิน (รับแจ้งจองใหม่)
 const SHEET_ID      = process.env.GOOGLE_SHEET_ID           || "";
 const SHEET_NAME    = process.env.GOOGLE_SHEET_NAME         || "Sheet1";
@@ -41,12 +43,47 @@ const REDIS_TOKEN   = process.env.UPSTASH_REDIS_REST_TOKEN  || "";
 const RICH_MENU_ID  = process.env.RICH_MENU_ID              || "";
 
 // ─── LINE helpers ───────────────────────────────────────────────
-async function linePush(to, messages) {
-  await fetch("https://api.line.me/v2/bot/message/push", {
+// เช็ค quota คงเหลือของ OA token นั้นๆ
+async function getQuotaRemaining(token) {
+  try {
+    const res = await fetch("https://api.line.me/v2/bot/message/quota/consumption", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return 0;
+    const d = await res.json();
+    const FREE_QUOTA = 300;
+    return Math.max(0, FREE_QUOTA - (d.totalUsage || 0));
+  } catch {
+    return 0;
+  }
+}
+
+// push ด้วย token ที่ระบุ
+async function linePushWithToken(to, messages, token) {
+  const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${LINE_TOKEN}` },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ to, messages }),
   });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`LINE push failed (${res.status}): ${err}`);
+  }
+}
+
+// push หลัก → ถ้า quota หมดให้ fallback ไป OA สำรอง
+async function linePush(to, messages) {
+  if (!LINE_TOKEN_BACKUP) {
+    return linePushWithToken(to, messages, LINE_TOKEN);
+  }
+  const remaining = await getQuotaRemaining(LINE_TOKEN);
+  if (remaining > 0) {
+    console.log(`[LINE] quota เหลือ ${remaining} — ใช้ OA หลัก`);
+    return linePushWithToken(to, messages, LINE_TOKEN);
+  }
+  const target = (to === LINE_GROUP && LINE_GROUP_BACKUP) ? LINE_GROUP_BACKUP : to;
+  console.warn(`[LINE] quota OA หลักหมด — fallback ไป OA สำรอง (group: ${target})`);
+  return linePushWithToken(target, messages, LINE_TOKEN_BACKUP);
 }
 async function lineReply(replyToken, messages) {
   await fetch("https://api.line.me/v2/bot/message/reply", {
