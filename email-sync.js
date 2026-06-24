@@ -207,17 +207,36 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
 // ─────────────────────────────────────────────
 // ส่ง LINE
 // ─────────────────────────────────────────────
+const LINE_TOKEN_BACKUP = process.env.LINE_CHANNEL_ACCESS_TOKEN_BACKUP || "";
+const LINE_GROUP_BACKUP = process.env.LINE_GROUP_ID_BACKUP || "";
+
+async function linePushWithToken(to, text, token) {
+  const res = await axios.post(
+    "https://api.line.me/v2/bot/message/push",
+    { to, messages: [{ type: "text", text }] },
+    { headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" } }
+  );
+  console.log("[linePush] OK to=" + to.slice(0,10) + "... status=" + res.status);
+}
+
 async function linePush(to, text) {
   try {
-    const res = await axios.post(
-      "https://api.line.me/v2/bot/message/push",
-      { to, messages: [{ type: "text", text }] },
-      { headers: { Authorization: "Bearer " + LINE_TOKEN, "Content-Type": "application/json" } }
-    );
-    console.log("[linePush] OK to=" + to.slice(0,10) + "... status=" + res.status);
+    await linePushWithToken(to, text, LINE_TOKEN);
   } catch (e) {
     const body = e.response?.data ? JSON.stringify(e.response.data) : e.message;
-    console.error("[linePush] FAIL to=" + to + " error=" + body);
+    const isQuotaErr = e.response?.data?.message?.includes("monthly limit");
+    if (isQuotaErr && LINE_TOKEN_BACKUP) {
+      console.warn("[LINE] quota หมด — fallback ไป OA สำรอง");
+      const target = (to === LINE_GROUP && LINE_GROUP_BACKUP) ? LINE_GROUP_BACKUP : to;
+      try {
+        await linePushWithToken(target, text, LINE_TOKEN_BACKUP);
+      } catch (e2) {
+        const b2 = e2.response?.data ? JSON.stringify(e2.response.data) : e2.message;
+        console.error("[linePush] FAIL backup to=" + target + " error=" + b2);
+      }
+    } else {
+      console.error("[linePush] FAIL to=" + to + " error=" + body);
+    }
   }
 }
 
