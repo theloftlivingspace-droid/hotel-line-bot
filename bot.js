@@ -753,6 +753,21 @@ async function loadBillHistory() { return (await redisGet("bill_history")) || []
 async function saveBillHistory(h) { await redisSet("bill_history", h); }
 
 // ─── Webhook ─────────────────────────────────────────────────────
+// Webhook สำรอง — ไม่ verify signature ใช้แค่ดึง groupId จาก OA สำรอง
+app.post("/webhook-backup", (req, res) => {
+  let body = "";
+  req.on("data", c => { body += c; });
+  req.on("end", () => {
+    res.status(200).send("OK");
+    let data; try { data = JSON.parse(body); } catch { return; }
+    for (const event of (data.events || [])) {
+      const gid = event.source?.groupId;
+      const uid = event.source?.userId;
+      console.log("[WebhookBackup] type=" + event.type + " source=" + event.source?.type + " userId=" + (uid||"-") + " groupId=" + (gid||"-"));
+    }
+  });
+});
+
 app.post("/webhook", (req, res) => {
   let body = "";
   req.on("data", c => { body += c; });
