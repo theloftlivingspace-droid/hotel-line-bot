@@ -496,6 +496,37 @@ async function handleUserMessage(event) {
     user = users[userId] = { userId, displayName: profile.displayName, state: "WAIT_FLOOR", pendingFloor: null, pendingRoom: null, roomNumber: null };
   }
 
+  // ─── Admin OA switch commands ────────────────────────────────
+  if (userId === ADMIN_USER && (text === "/backup" || text === "/oa backup")) {
+    await redisSet("use_backup_oa", "1");
+    await lineReply(event.replyToken, [{
+      type: "text",
+      text: "✅ ระบบเปลี่ยนไปใช้ OA สำรองแล้ว\nข้อความแม่บ้านจะส่งจาก OA สำรองต่อไป",
+      quickReply: { items: [
+        { type: "action", action: { type: "postback", label: "🔄 กลับ OA หลัก", data: "action=USE_PRIMARY_OA" } }
+      ]}
+    }]);
+    return;
+  }
+  if (userId === ADMIN_USER && (text === "/primary" || text === "/oa primary" || text === "/oa หลัก")) {
+    await redisSet("use_backup_oa", "0");
+    await lineReply(event.replyToken, [{ type: "text", text: "✅ ระบบกลับมาใช้ OA หลักแล้ว" }]);
+    return;
+  }
+  if (userId === ADMIN_USER && (text === "/oa status" || text === "/oa")) {
+    const flag = await redisGet("use_backup_oa");
+    const using = flag === "1" ? "🔁 OA สำรอง" : "✅ OA หลัก";
+    await lineReply(event.replyToken, [{
+      type: "text",
+      text: `📡 ใช้งานอยู่: ${using}`,
+      quickReply: { items: [
+        { type: "action", action: { type: "postback", label: "🔁 สลับ OA สำรอง", data: "action=USE_BACKUP_OA" } },
+        { type: "action", action: { type: "postback", label: "✅ กลับ OA หลัก", data: "action=USE_PRIMARY_OA" } }
+      ]}
+    }]);
+    return;
+  }
+
   const floorMatch = text.match(/^ชั้น(\d)/);
   if (floorMatch) {
     users[userId].state = "WAIT_ROOM"; users[userId].pendingFloor = floorMatch[1]; users[userId].updatedAt = new Date().toISOString();
