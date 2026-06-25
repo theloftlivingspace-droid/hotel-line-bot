@@ -1190,6 +1190,28 @@ startWebhookServer();
 cron.schedule(CRON_SCHED, runHotelJob, { timezone: "Asia/Bangkok" });
 // Rent reminder: วันที่ 5 และ 8-15 เวลา 7:00 น.
 cron.schedule("0 7 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });
+// ต้นเดือน 09:00 → เช็ค Redis flag ถ้าใช้ OA สำรองอยู่ แจ้ง admin ให้กลับ OA หลัก
+cron.schedule("0 9 1 * *", async () => {
+  try {
+    const useBackup = await redisGet("use_backup_oa");
+    if (useBackup !== "1" || !ADMIN_USER) return;
+    const token = LINE_TOKEN_BACKUP || LINE_TOKEN;
+    const msg = {
+      type: "text",
+      text: "🔄 ต้นเดือนใหม่แล้ว quota LINE OA หลัก reset เป็น 300 แล้ว\n\n" +
+            "กดปุ่มด้านล่างเพื่อสลับกลับไปใช้ OA หลัก",
+      quickReply: {
+        items: [
+          { type: "action", action: { type: "postback", label: "✅ กลับ OA หลัก", data: "action=USE_PRIMARY_OA" } },
+        ]
+      }
+    };
+    await linePushWithToken(ADMIN_USER, [msg], token);
+    console.log("[CRON] แจ้ง admin ต้นเดือน — กลับ OA หลัก");
+  } catch (e) {
+    console.error("[CRON] แจ้ง admin ต้นเดือนไม่ได้:", e.message);
+  }
+}, { timezone: "Asia/Bangkok" });
 if (process.argv.includes("--test")) { console.log("โหมดทดสอบ..."); runHotelJob(); }
 if (process.argv.includes("--sync")) { console.log("sync email ทันที..."); syncEmails(); }
 
