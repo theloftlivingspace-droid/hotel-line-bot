@@ -204,90 +204,6 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
   return null;
 }
 
-
-// ─────────────────────────────────────────────
-// ใส่สีแถวใน Sheet1 ทันทีตาม room type + channel
-// ─────────────────────────────────────────────
-// (ROOM_TYPE_MAP, ROOM_COLORS, CHANNEL_COLORS declared at top of file)
-const ROOM_COLORS = {
-  'luxury'  : { bg:'#fff3cd', font:'#856404' },
-  'retro'   : { bg:'#d1ecf1', font:'#0c5460' },
-  'elegance': { bg:'#d4edda', font:'#155724' },
-  'allure'  : { bg:'#e2d9f3', font:'#4a235a' },
-  'legacy'  : { bg:'#fde8d8', font:'#7d3c0a' },
-  'radiance': { bg:'#d0f0fc', font:'#0a4d6e' },
-  'mycondo' : { bg:'#e8e0d4', font:'#5a4a32' },
-  'cancel'  : { bg:'#f8d7da', font:'#721c24' },
-  'รอยืนยัน': { bg:'#e2e3e5', font:'#383d41' },
-};
-const CHANNEL_COLORS = {
-  'airbnb'  : { bg:'#ff5a5f', font:'#ffffff' },
-  'booking' : { bg:'#003580', font:'#ffffff' },
-  'expedia' : { bg:'#ffc72c', font:'#333333' },
-  'trip'    : { bg:'#00aaff', font:'#ffffff' },
-  'direct'  : { bg:'#28a745', font:'#ffffff' },
-  'extranet': { bg:'#6c757d', font:'#ffffff' },
-};
-
-function hexToRgb(hex) {
-  const r = parseInt(hex.slice(1,3),16)/255;
-  const g = parseInt(hex.slice(3,5),16)/255;
-  const b = parseInt(hex.slice(5,7),16)/255;
-  return { red:r, green:g, blue:b };
-}
-
-async function colorRowInSheet(sheets, sheetId, rowIndex, roomLabel, channel) {
-  // rowIndex = 0-based row index (0 = header)
-  const roomNum = (roomLabel || '').match(/^(\d+)/)?.[1] || '';
-  const roomType = ROOM_TYPE_MAP[roomNum] || (String(roomLabel).toLowerCase().includes('cancel') ? 'cancel' : null);
-  const roomColor = roomType ? ROOM_COLORS[roomType] : null;
-  const chKey = (channel || '').toLowerCase().replace('.com','').replace('com','');
-  const chColor = CHANNEL_COLORS[chKey] || null;
-
-  if (!roomColor && !chColor) return;
-
-  const requests = [];
-  // A-H ทั้งแถว: สี bg จาก room type
-  if (roomColor) {
-    requests.push({ repeatCell: {
-      range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex+1, startColumnIndex: 0, endColumnIndex: 8 },
-      cell: { userEnteredFormat: {
-        backgroundColor: hexToRgb(roomColor.bg),
-        textFormat: { foregroundColor: hexToRgb(roomColor.font) }
-      }},
-      fields: 'userEnteredFormat(backgroundColor,textFormat)'
-    }});
-  }
-  // Col E (index 4): channel badge color
-  if (chColor) {
-    requests.push({ repeatCell: {
-      range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex+1, startColumnIndex: 4, endColumnIndex: 5 },
-      cell: { userEnteredFormat: {
-        backgroundColor: hexToRgb(chColor.bg),
-        textFormat: { bold: true, foregroundColor: hexToRgb(chColor.font) }
-      }},
-      fields: 'userEnteredFormat(backgroundColor,textFormat)'
-    }});
-  }
-  // Col A (index 0): bold
-  requests.push({ repeatCell: {
-    range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex+1, startColumnIndex: 0, endColumnIndex: 1 },
-    cell: { userEnteredFormat: { textFormat: { bold: true } } },
-    fields: 'userEnteredFormat.textFormat.bold'
-  }});
-
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: SHEET_ID,
-    requestBody: { requests }
-  });
-}
-
-async function getSheet1Id(sheets) {
-  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
-  const s1 = meta.data.sheets.find(s => s.properties.title === SHEET_NAME);
-  return s1 ? s1.properties.sheetId : 0;
-}
-
 // ─────────────────────────────────────────────
 // ส่ง LINE
 // ─────────────────────────────────────────────
@@ -558,9 +474,22 @@ function parseAirbnbDirectEmail(email) {
 // แปลงวันที่ใน Sheet → ISO (รองรับทั้ง YYYY-MM-DD และ DD/MM/YYYY)
 function normalizeDate(str) {
   if (!str) return "";
-  str = str.trim();
+  // Google Sheets Date object → JS Date string e.g. "Thu Jun 18 2026 00:00:00 GMT+0700"
+  if (str instanceof Date || (typeof str === "object")) {
+    const d = new Date(str);
+    if (!isNaN(d)) return d.toISOString().slice(0,10);
+  }
+  str = String(str).trim();
+  // already YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
-  const dmy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  // JS Date string e.g. "Thu Jun 18 2026 ..."
+  const jsDate = new Date(str);
+  if (!isNaN(jsDate) && str.length > 6) return jsDate.toISOString().slice(0,10);
+  // MM/DD/YYYY หรือ M/D/YYYY (Google Sheets locale US)
+  const mdy = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) return mdy[3] + "-" + mdy[1].padStart(2,"0") + "-" + mdy[2].padStart(2,"0");
+  // DD-MM-YYYY
+  const dmy = str.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
   if (dmy) return dmy[3] + "-" + dmy[2].padStart(2,"0") + "-" + dmy[1].padStart(2,"0");
   return str;
 }
@@ -843,13 +772,6 @@ async function syncEmails() {
         : new Date().toISOString().slice(0, 10);
       await addPendingRow(sheets, res, emailBookingDate);
       await appendEmailLog(sheets, res);
-      // ใส่สีแถว รอยืนยัน ทันที
-      try {
-        const sheetMeta = await getSheet1Id(sheets);
-        const rowData = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + '!A:A' });
-        const lastRow = (rowData.data.values || []).length;
-        await colorRowInSheet(sheets, sheetMeta, lastRow - 1, 'รอยืนยัน', res.channel);
-      } catch(e) { console.error('colorRow pending error:', e.message); }
 
       // auto-assign: เลือกห้องว่างใน type เดียวกัน, เลขห้องน้อยก่อน
       // Mycondo 363: ถ้า roomName มี "363" หรือ "mycondo" → assign 363 ตรงๆ
@@ -879,14 +801,6 @@ async function syncEmails() {
         const roomLabel = getRoomLabel(assignedRoom);
         await updateRoomInSheet(sheets, res.resId, roomLabel);
         console.log("auto-assign: " + res.resId + " -> " + roomLabel);
-        // ใส่สีแถวตาม room type ทันที
-        try {
-          const s1id = await getSheet1Id(sheets);
-          const rv = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + '!F:F' });
-          const rows = rv.data.values || [];
-          const rIdx = rows.findIndex((r,i) => i>0 && (r[0]||'').trim()===res.resId);
-          if (rIdx > 0) await colorRowInSheet(sheets, s1id, rIdx, roomLabel, res.channel);
-        } catch(e) { console.error('colorRow assign error:', e.message); }
         const today = todayBKK(), tomorrow = tomorrowBKK(), hour = hourBKK();
         if (res.checkIn === today || (res.checkIn === tomorrow && hour >= 19)) {
           // ห้อง 363 (Mycondo) ไม่ส่งเข้ากลุ่มแม่บ้าน
