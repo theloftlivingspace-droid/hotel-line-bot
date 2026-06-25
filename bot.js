@@ -909,16 +909,21 @@ app.post("/webhook-backup", (req, res) => {
           // admin พิมพ์คำสั่งในกลุ่มผ่าน OA สำรอง
           if (event.type === "message" && isGroup && event.message.type === "text" && (uid === ADMIN_USER || uid === ADMIN_USER_2)) {
             const cmd = (event.message.text || "").trim().toLowerCase();
+            const bReply = async (text) => fetch("https://api.line.me/v2/bot/message/reply", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${LINE_TOKEN_BACKUP}` },
+              body: JSON.stringify({ replyToken: event.replyToken, messages: [{ type: "text", text }] }),
+            });
             if (cmd === "/backup" || cmd === "/oa backup") {
               await redisSet("use_backup_oa", "1");
-              await lineReply(event.replyToken, [{ type: "text", text: "✅ สลับไปใช้ OA สำรองแล้ว" }]);
+              await bReply("✅ สลับไปใช้ OA สำรองแล้ว");
             } else if (cmd === "/primary" || cmd === "/oa primary") {
               await redisSet("use_backup_oa", "0");
-              await lineReply(event.replyToken, [{ type: "text", text: "✅ กลับมาใช้ OA หลักแล้ว" }]);
+              await bReply("✅ กลับมาใช้ OA หลักแล้ว");
             } else if (cmd === "/oa" || cmd === "/oa status") {
               const flag = await redisGet("use_backup_oa");
               const using = flag === "1" ? "🔁 OA สำรอง" : "✅ OA หลัก";
-              await lineReply(event.replyToken, [{ type: "text", text: `📡 ใช้งานอยู่: ${using}` }]);
+              await bReply(`📡 ใช้งานอยู่: ${using}`);
             }
           }
         } catch (err) { console.error("[WebhookBackup Error]", err.message); }
