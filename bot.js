@@ -74,23 +74,41 @@ async function linePushWithToken(to, messages, token) {
 // แจ้ง admin เมื่อ quota หมด — ใช้ LINE_TOKEN_BACKUP ส่งเพราะ token หลัก quota หมดแล้ว
 async function notifyAdminQuotaExhausted(usage) {
   if (!ADMIN_USER) return;
-  const token = LINE_TOKEN_BACKUP || LINE_TOKEN; // fallback ไป token หลักถ้าไม่มี backup
-  const msg = `⚠️ LINE OA "Loft Auto Report" quota หมดแล้ว\n` +
-              `📊 ใช้ไปแล้ว: ${usage}/300 ข้อความ\n\n` +
-              `📋 ขั้นตอน:\n` +
-              `1. เปิด LINE กลุ่มแม่บ้าน\n` +
-              `2. ลบ OA "Loft Auto Report" ออกจากกลุ่ม\n` +
-              `3. เพิ่ม OA สำรองเข้ากลุ่มแทน\n\n` +
-              `⏳ ระบบจะส่งข้อความไม่ได้จนกว่าจะสลับ OA`;
+  const token = LINE_TOKEN_BACKUP || LINE_TOKEN;
+  const messages = [
+    {
+      type: "text",
+      text: `⚠️ LINE OA "Loft Auto Report" quota หมดแล้ว\n` +
+            `📊 ใช้ไปแล้ว: ${usage}/300 ข้อความ\n\n` +
+            `📋 ขั้นตอน:\n` +
+            `1. เปิด LINE กลุ่มแม่บ้าน\n` +
+            `2. ลบ OA "Loft Auto Report" ออกจากกลุ่ม\n` +
+            `3. เพิ่ม OA สำรองเข้ากลุ่มแทน\n\n` +
+            `⏳ กดปุ่มด้านล่างหลังสลับ OA เรียบร้อยแล้ว`,
+      quickReply: {
+        items: [
+          { type: "action", action: { type: "postback", label: "✅ สลับ OA แล้ว", data: "action=USE_BACKUP_OA" } },
+        ]
+      }
+    }
+  ];
   try {
-    await linePushWithToken(ADMIN_USER, [{ type: "text", text: msg }], token);
+    await linePushWithToken(ADMIN_USER, messages, token);
   } catch (e) {
     console.error("[LINE] แจ้ง admin ไม่ได้:", e.message);
   }
 }
 
-// push หลัก → ถ้า quota หมดแจ้ง admin แทน ไม่ส่งข้อความนั้น
+// push หลัก → เช็ค Redis flag ก่อน ถ้าสลับ OA แล้วใช้ backup ทันที
 async function linePush(to, messages) {
+  // admin กด "สลับ OA แล้ว" → ใช้ backup token + group ทันที ไม่เช็ค quota
+  const useBackup = await redisGet("use_backup_oa");
+  if (useBackup === "1" && LINE_TOKEN_BACKUP) {
+    const target = (to === LINE_GROUP && LINE_GROUP_BACKUP) ? LINE_GROUP_BACKUP : to;
+    console.log("[LINE] Redis flag use_backup_oa=1 — ใช้ OA สำรอง");
+    return linePushWithToken(target, messages, LINE_TOKEN_BACKUP);
+  }
+
   const remaining = await getQuotaRemaining(LINE_TOKEN);
 
   // null = API error → ลองส่งก่อน ถ้า LINE ตอบ quota error ค่อยแจ้ง admin
@@ -115,13 +133,21 @@ async function linePush(to, messages) {
     console.warn(`[LINE] quota เหลือน้อย (${remaining}) — เตือน admin`);
     if (ADMIN_USER) {
       const token = LINE_TOKEN_BACKUP || LINE_TOKEN; // ใช้ backup ส่งเตือน ไม่นับ quota หลัก
-      const warn = `⚠️ LINE OA "Loft Auto Report" quota เหลือ ${remaining} ข้อความ\n\n` +
-                   `📋 เตรียมสลับ OA:\n` +
-                   `1. เปิด LINE กลุ่มแม่บ้าน\n` +
-                   `2. ลบ OA "Loft Auto Report" ออกจากกลุ่ม\n` +
-                   `3. เพิ่ม OA สำรองเข้ากลุ่มแทน\n\n` +
-                   `⏳ ควรสลับก่อน quota หมด`;
-      linePushWithToken(ADMIN_USER, [{ type: "text", text: warn }], token).catch(() => {});
+      const warnMsg = {
+        type: "text",
+        text: `⚠️ LINE OA "Loft Auto Report" quota เหลือ ${remaining} ข้อความ\n\n` +
+              `📋 เตรียมสลับ OA:\n` +
+              `1. เปิด LINE กลุ่มแม่บ้าน\n` +
+              `2. ลบ OA "Loft Auto Report" ออกจากกลุ่ม\n` +
+              `3. เพิ่ม OA สำรองเข้ากลุ่มแทน\n\n` +
+              `⏳ กดปุ่มด้านล่างหลังสลับ OA เรียบร้อยแล้ว`,
+        quickReply: {
+          items: [
+            { type: "action", action: { type: "postback", label: "✅ สลับ OA แล้ว", data: "action=USE_BACKUP_OA" } },
+          ]
+        }
+      };
+      linePushWithToken(ADMIN_USER, [warnMsg], token).catch(() => {});
     }
     return linePushWithToken(to, messages, LINE_TOKEN);
   }
@@ -600,6 +626,22 @@ async function handlePostback(event) {
   const users = await loadUsers(), rooms = await loadRooms();
   const user = users[userId];
   const room = user?.roomNumber ? rooms[user.roomNumber] : null;
+
+  // admin กดปุ่ม "สลับ OA แล้ว" → set Redis flag ให้ใช้ backup OA
+  if (data === "action=USE_BACKUP_OA") {
+    if (userId !== ADMIN_USER) return;
+    await redisSet("use_backup_oa", "1");
+    await lineReply(event.replyToken, [{ type: "text", text: "✅ ระบบเปลี่ยนไปใช้ OA สำรองแล้ว\nข้อความแม่บ้านจะส่งจาก OA สำรองต่อไป" }]);
+    return;
+  }
+
+  // admin กดปุ่ม "กลับ OA หลัก" → ล้าง Redis flag
+  if (data === "action=USE_PRIMARY_OA") {
+    if (userId !== ADMIN_USER) return;
+    await redisSet("use_backup_oa", "0");
+    await lineReply(event.replyToken, [{ type: "text", text: "✅ ระบบกลับมาใช้ OA หลักแล้ว" }]);
+    return;
+  }
 
   if (data === "action=CHECK_RENT") {
   const myRooms = Object.values(rooms).filter(r => r.lineUserId === userId);
