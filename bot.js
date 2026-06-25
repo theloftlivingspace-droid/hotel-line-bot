@@ -71,9 +71,10 @@ async function linePushWithToken(to, messages, token) {
   }
 }
 
-// แจ้ง admin เมื่อ quota หมด (push ตรงหา ADMIN_USER ด้วย token หลักเสมอ)
+// แจ้ง admin เมื่อ quota หมด — ใช้ LINE_TOKEN_BACKUP ส่งเพราะ token หลัก quota หมดแล้ว
 async function notifyAdminQuotaExhausted(usage) {
   if (!ADMIN_USER) return;
+  const token = LINE_TOKEN_BACKUP || LINE_TOKEN; // fallback ไป token หลักถ้าไม่มี backup
   const msg = `⚠️ LINE OA "Loft Auto Report" quota หมดแล้ว\n` +
               `📊 ใช้ไปแล้ว: ${usage}/300 ข้อความ\n\n` +
               `📋 ขั้นตอน:\n` +
@@ -82,7 +83,7 @@ async function notifyAdminQuotaExhausted(usage) {
               `3. เพิ่ม OA สำรองเข้ากลุ่มแทน\n\n` +
               `⏳ ระบบจะส่งข้อความไม่ได้จนกว่าจะสลับ OA`;
   try {
-    await linePushWithToken(ADMIN_USER, [{ type: "text", text: msg }], LINE_TOKEN);
+    await linePushWithToken(ADMIN_USER, [{ type: "text", text: msg }], token);
   } catch (e) {
     console.error("[LINE] แจ้ง admin ไม่ได้:", e.message);
   }
