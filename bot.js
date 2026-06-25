@@ -1114,6 +1114,24 @@ app.post("/api/send-msg-one", adminAuth, async (req, res) => {
   try { await linePush(room.lineUserId, [{ type: "text", text: message }]); res.json({ ok: true }); }
   catch (e) { res.json({ ok: false, error: e.message }); }
 });
+// ── Send note to maid LINE group ──────────────────────────────────────
+app.post("/api/send-maid-note", adminAuth, async (req, res) => {
+  const { room, guest, checkin, checkout, note } = req.body;
+  if (!note) return res.status(400).json({ ok: false, error: "note required" });
+  const lines = [];
+  if (room)    lines.push(`🏠 ห้อง ${room}`);
+  if (guest)   lines.push(`👤 ${guest}`);
+  if (checkin) lines.push(`📅 ${checkin}${checkout ? ' → ' + checkout : ''}`);
+  lines.push(`📝 ${note}`);
+  const msg = lines.join("\n");
+  try {
+    await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
 app.post("/api/broadcast", adminAuth, async (req, res) => {
   const { message } = req.body; if (!message) return res.status(400).json({ error: "message required" });
   const targets = Object.values(await loadRooms()).filter(r => r.lineUserId);
@@ -1282,4 +1300,5 @@ function buildDefaultRooms() {
   data.forEach(d => { rooms[d.roomNumber] = { ...d, lineUserId: "" }; });
   return rooms;
 }
+
 
