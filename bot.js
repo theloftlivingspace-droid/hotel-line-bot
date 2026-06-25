@@ -878,9 +878,50 @@ app.post("/webhook-backup", (req, res) => {
     res.status(200).send("OK");
     let data; try { data = JSON.parse(body); } catch { return; }
     for (const event of (data.events || [])) {
-      const gid = event.source?.groupId;
-      const uid = event.source?.userId;
-      console.log("[WebhookBackup] type=" + event.type + " source=" + event.source?.type + " userId=" + (uid||"-") + " groupId=" + (gid||"-"));
+      (async () => {
+        try {
+          const sourceType = event.source?.type;
+          const isGroup = sourceType === "group" || sourceType === "room";
+          const uid = event.source?.userId || "";
+          const gid = event.source?.groupId || "";
+          console.log("[WebhookBackup] type=" + event.type + " source=" + sourceType + " userId=" + (uid||"-") + " groupId=" + (gid||"-"));
+
+          // join/leave → สลับ OA อัตโนมัติ
+          if (event.type === "join" && isGroup) {
+            if (gid === LINE_GROUP_BACKUP) {
+              await redisSet("use_backup_oa", "1");
+              console.log("[OA] backup OA joined group → use_backup_oa=1");
+              await linePushWithToken(ADMIN_USER, [{ type: "text", text: "🔁 OA สำรองเข้ากลุ่มแม่บ้านแล้ว\n✅ ระบบสลับไปใช้ OA สำรองอัตโนมัติ" }], LINE_TOKEN_BACKUP || LINE_TOKEN).catch(() => {});
+            } else if (gid === LINE_GROUP) {
+              await redisSet("use_backup_oa", "0");
+              console.log("[OA] primary OA joined group → use_backup_oa=0");
+              await linePushWithToken(ADMIN_USER, [{ type: "text", text: "✅ OA หลักเข้ากลุ่มแม่บ้านแล้ว\nระบบกลับมาใช้ OA หลักอัตโนมัติ" }], LINE_TOKEN).catch(() => {});
+            }
+            return;
+          }
+          if (event.type === "leave" && isGroup && gid === LINE_GROUP_BACKUP) {
+            await redisSet("use_backup_oa", "0");
+            console.log("[OA] backup OA left group → use_backup_oa=0");
+            return;
+          }
+
+          // admin พิมพ์คำสั่งในกลุ่มผ่าน OA สำรอง
+          if (event.type === "message" && isGroup && event.message.type === "text" && uid === ADMIN_USER) {
+            const cmd = (event.message.text || "").trim().toLowerCase();
+            if (cmd === "/backup" || cmd === "/oa backup") {
+              await redisSet("use_backup_oa", "1");
+              await lineReply(event.replyToken, [{ type: "text", text: "✅ สลับไปใช้ OA สำรองแล้ว" }]);
+            } else if (cmd === "/primary" || cmd === "/oa primary") {
+              await redisSet("use_backup_oa", "0");
+              await lineReply(event.replyToken, [{ type: "text", text: "✅ กลับมาใช้ OA หลักแล้ว" }]);
+            } else if (cmd === "/oa" || cmd === "/oa status") {
+              const flag = await redisGet("use_backup_oa");
+              const using = flag === "1" ? "🔁 OA สำรอง" : "✅ OA หลัก";
+              await lineReply(event.replyToken, [{ type: "text", text: `📡 ใช้งานอยู่: ${using}` }]);
+            }
+          }
+        } catch (err) { console.error("[WebhookBackup Error]", err.message); }
+      })();
     }
   });
 });
