@@ -474,23 +474,48 @@ function parseAirbnbDirectEmail(email) {
 // แปลงวันที่ใน Sheet → ISO (รองรับทั้ง YYYY-MM-DD และ DD/MM/YYYY)
 function normalizeDate(str) {
   if (!str) return "";
-  // Google Sheets Date object → JS Date string e.g. "Thu Jun 18 2026 00:00:00 GMT+0700"
-  if (str instanceof Date || (typeof str === "object")) {
+  // Date object
+  if (str instanceof Date) {
+    // Use Bangkok offset (+7) to avoid UTC shift causing date to slip by 1 day
+    const bkk = new Date(str.getTime() + 7 * 60 * 60 * 1000);
+    return bkk.toISOString().slice(0, 10);
+  }
+  if (typeof str === "object") {
     const d = new Date(str);
-    if (!isNaN(d)) return d.toISOString().slice(0,10);
+    if (!isNaN(d)) {
+      const bkk = new Date(d.getTime() + 7 * 60 * 60 * 1000);
+      return bkk.toISOString().slice(0, 10);
+    }
   }
   str = String(str).trim();
   // already YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
-  // JS Date string e.g. "Thu Jun 18 2026 ..."
-  const jsDate = new Date(str);
-  if (!isNaN(jsDate) && str.length > 6) return jsDate.toISOString().slice(0,10);
-  // MM/DD/YYYY หรือ M/D/YYYY (Google Sheets locale US)
-  const mdy = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (mdy) return mdy[3] + "-" + mdy[1].padStart(2,"0") + "-" + mdy[2].padStart(2,"0");
-  // DD-MM-YYYY
+  // Slash-separated: D/M/YYYY or M/D/YYYY
+  // Disambiguate: if first number > 12 → must be day (D/M/YYYY); else assume D/M/YYYY (Thai convention)
+  const slash = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    let d = parseInt(slash[1], 10), m = parseInt(slash[2], 10), y = parseInt(slash[3], 10);
+    // If first > 12 it's definitely the day; otherwise treat as D/M (Thai)
+    // Exception: if second > 12, it must be day → swap (M/D US format slipped in)
+    if (m > 12) { [d, m] = [m, d]; }
+    return y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+  }
+  // Dash-separated: DD-MM-YYYY
   const dmy = str.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
-  if (dmy) return dmy[3] + "-" + dmy[2].padStart(2,"0") + "-" + dmy[1].padStart(2,"0");
+  if (dmy) {
+    let d = parseInt(dmy[1], 10), m = parseInt(dmy[2], 10), y = parseInt(dmy[3], 10);
+    if (m > 12) { [d, m] = [m, d]; }
+    return y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+  }
+  // JS Date string e.g. "Thu Jun 18 2026 00:00:00 GMT+0700" — parse with BKK offset correction
+  if (str.length > 10) {
+    const jsDate = new Date(str);
+    if (!isNaN(jsDate)) {
+      // Shift to BKK (+7) before slicing to avoid midnight UTC rolling back 1 day
+      const bkk = new Date(jsDate.getTime() + 7 * 60 * 60 * 1000);
+      return bkk.toISOString().slice(0, 10);
+    }
+  }
   return str;
 }
 
