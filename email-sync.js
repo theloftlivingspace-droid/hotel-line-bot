@@ -210,6 +210,19 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
 const LINE_TOKEN_BACKUP = process.env.LINE_CHANNEL_ACCESS_TOKEN_BACKUP || "";
 const LINE_GROUP_BACKUP = process.env.LINE_GROUP_ID_BACKUP || "";
 const ADMIN_ID_BACKUP   = process.env.ADMIN_USER_ID_BACKUP || "";
+const REDIS_URL         = process.env.UPSTASH_REDIS_REST_URL  || "";
+const REDIS_TOKEN       = process.env.UPSTASH_REDIS_REST_TOKEN || "";
+
+async function redisGet(key) {
+  if (!REDIS_URL) return null;
+  try {
+    const res = await axios.get(`${REDIS_URL}/get/${encodeURIComponent(key)}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+    });
+    if (!res.data.result) return null;
+    return JSON.parse(res.data.result);
+  } catch { return null; }
+}
 
 async function linePushWithToken(to, text, token) {
   const res = await axios.post(
@@ -221,6 +234,22 @@ async function linePushWithToken(to, text, token) {
 }
 
 async function linePush(to, text) {
+  // เช็ค Redis flag ก่อน — ถ้า admin สลับ OA แล้วใช้ backup ทันที
+  const useBackup = await redisGet("use_backup_oa");
+  if (useBackup === "1" && LINE_TOKEN_BACKUP) {
+    const target = (to === LINE_GROUP && LINE_GROUP_BACKUP) ? LINE_GROUP_BACKUP
+                 : (to === ADMIN_ID   && ADMIN_ID_BACKUP)   ? ADMIN_ID_BACKUP
+                 : to;
+    console.log("[LINE] Redis flag use_backup_oa=1 — ใช้ OA สำรอง");
+    try {
+      await linePushWithToken(target, text, LINE_TOKEN_BACKUP);
+    } catch (e2) {
+      const b2 = e2.response?.data ? JSON.stringify(e2.response.data) : e2.message;
+      console.error("[linePush] FAIL backup to=" + target + " error=" + b2);
+    }
+    return;
+  }
+  // ใช้ OA หลักตามปกติ
   try {
     await linePushWithToken(to, text, LINE_TOKEN);
   } catch (e) {
@@ -229,8 +258,8 @@ async function linePush(to, text) {
     if (isQuotaErr && LINE_TOKEN_BACKUP) {
       console.warn("[LINE] quota หมด — fallback ไป OA สำรอง");
       const target = (to === LINE_GROUP && LINE_GROUP_BACKUP) ? LINE_GROUP_BACKUP
-                  : (to === ADMIN_ID && ADMIN_ID_BACKUP) ? ADMIN_ID_BACKUP
-                  : to;
+                   : (to === ADMIN_ID   && ADMIN_ID_BACKUP)   ? ADMIN_ID_BACKUP
+                   : to;
       try {
         await linePushWithToken(target, text, LINE_TOKEN_BACKUP);
       } catch (e2) {
