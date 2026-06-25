@@ -27,10 +27,8 @@ const { google } = require("googleapis");
 
 // ─── ENV ────────────────────────────────────────────────────────
 const LINE_TOKEN    = process.env.LINE_CHANNEL_ACCESS_TOKEN        || "";
-const LINE_TOKEN_BACKUP = process.env.LINE_CHANNEL_ACCESS_TOKEN_BACKUP || ""; // OA สำรองเมื่อ quota หมด
 const LINE_SECRET   = process.env.LINE_CHANNEL_SECRET               || "";
 const LINE_GROUP    = process.env.LINE_GROUP_ID                     || "";   // กลุ่มแม่บ้าน (ยังใช้สำหรับสรุปประจำวัน)
-const LINE_GROUP_BACKUP = process.env.LINE_GROUP_ID_BACKUP          || "";   // กลุ่มแม่บ้านที่เพิ่ม OA สำรองไว้ด้วย
 const ADMIN_USER    = process.env.ADMIN_USER_ID             || "";   // LINE User ID แอดมิน (รับแจ้งจองใหม่)
 const SHEET_ID      = process.env.GOOGLE_SHEET_ID           || "";
 const SHEET_NAME    = process.env.GOOGLE_SHEET_NAME         || "Sheet1";
@@ -71,27 +69,64 @@ async function linePushWithToken(to, messages, token) {
   }
 }
 
-// push หลัก → ถ้า quota หมดให้ fallback ไป OA สำรอง
-async function linePush(to, messages) {
-  if (!LINE_TOKEN_BACKUP) {
-    return linePushWithToken(to, messages, LINE_TOKEN);
+// แจ้ง admin เมื่อ quota หมด (push ตรงหา ADMIN_USER ด้วย token หลักเสมอ)
+async function notifyAdminQuotaExhausted(usage) {
+  if (!ADMIN_USER) return;
+  const msg = `⚠️ LINE OA "Loft Auto Report" quota หมดแล้ว\n` +
+              `📊 ใช้ไปแล้ว: ${usage}/300 ข้อความ\n\n` +
+              `📋 ขั้นตอน:\n` +
+              `1. เปิด LINE กลุ่มแม่บ้าน\n` +
+              `2. ลบ OA "Loft Auto Report" ออกจากกลุ่ม\n` +
+              `3. เพิ่ม OA สำรองเข้ากลุ่มแทน\n\n` +
+              `⏳ ระบบจะส่งข้อความไม่ได้จนกว่าจะสลับ OA`;
+  try {
+    await linePushWithToken(ADMIN_USER, [{ type: "text", text: msg }], LINE_TOKEN);
+  } catch (e) {
+    console.error("[LINE] แจ้ง admin ไม่ได้:", e.message);
   }
+}
+
+// push หลัก → ถ้า quota หมดแจ้ง admin แทน ไม่ส่งข้อความนั้น
+async function linePush(to, messages) {
   const remaining = await getQuotaRemaining(LINE_TOKEN);
-  // null = ไม่รู้ quota (API error) → ลองส่งหลักก่อน แล้วค่อย fallback ถ้า fail
-  if (remaining === null || remaining > 0) {
+
+  // null = API error → ลองส่งก่อน ถ้า LINE ตอบ quota error ค่อยแจ้ง admin
+  if (remaining === null) {
     try {
-      if (remaining !== null) console.log(`[LINE] quota เหลือ ${remaining} — ใช้ OA หลัก`);
       return await linePushWithToken(to, messages, LINE_TOKEN);
     } catch (err) {
-      const isQuotaErr = err.message && err.message.includes("monthly limit");
-      if (!isQuotaErr) throw err; // error อื่น → throw ต่อ
-      console.warn(`[LINE] OA หลัก quota หมด (caught) — fallback ไป OA สำรอง`);
+      const isQuotaErr = err.message && (
+        err.message.includes("monthly limit") || err.message.includes("430")
+      );
+      if (isQuotaErr) {
+        console.warn("[LINE] quota หมด (caught from push) — แจ้ง admin");
+        await notifyAdminQuotaExhausted("≥300");
+        return; // ไม่ส่งข้อความนั้น
+      }
+      throw err;
     }
-  } else {
-    console.warn(`[LINE] quota OA หลักหมด (${remaining}) — fallback ไป OA สำรอง`);
   }
-  const target = (to === LINE_GROUP && LINE_GROUP_BACKUP) ? LINE_GROUP_BACKUP : to;
-  return linePushWithToken(target, messages, LINE_TOKEN_BACKUP);
+
+  // เหลือ ≤ 10 → เตือน admin ล่วงหน้า แต่ยังส่งได้
+  if (remaining > 0 && remaining <= 10) {
+    console.warn(`[LINE] quota เหลือน้อย (${remaining}) — เตือน admin`);
+    if (ADMIN_USER) {
+      const warn = `⚠️ LINE OA "Loft Auto Report" quota เหลือ ${remaining} ข้อความ\nกรุณาเตรียมสลับ OA เร็วๆ นี้`;
+      linePushWithToken(ADMIN_USER, [{ type: "text", text: warn }], LINE_TOKEN).catch(() => {});
+    }
+    return linePushWithToken(to, messages, LINE_TOKEN);
+  }
+
+  // quota หมด → แจ้ง admin ไม่ส่ง
+  if (remaining <= 0) {
+    console.warn("[LINE] quota หมด — แจ้ง admin ไม่ส่งข้อความ");
+    await notifyAdminQuotaExhausted(300);
+    return;
+  }
+
+  // ปกติ → ส่งเลย
+  console.log(`[LINE] quota เหลือ ${remaining} — ส่งปกติ`);
+  return linePushWithToken(to, messages, LINE_TOKEN);
 }
 async function lineReply(replyToken, messages) {
   await fetch("https://api.line.me/v2/bot/message/reply", {
