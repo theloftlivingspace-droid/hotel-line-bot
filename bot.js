@@ -114,8 +114,14 @@ async function linePush(to, messages) {
   if (remaining > 0 && remaining <= 10) {
     console.warn(`[LINE] quota เหลือน้อย (${remaining}) — เตือน admin`);
     if (ADMIN_USER) {
-      const warn = `⚠️ LINE OA "Loft Auto Report" quota เหลือ ${remaining} ข้อความ\nกรุณาเตรียมสลับ OA เร็วๆ นี้`;
-      linePushWithToken(ADMIN_USER, [{ type: "text", text: warn }], LINE_TOKEN).catch(() => {});
+      const token = LINE_TOKEN_BACKUP || LINE_TOKEN; // ใช้ backup ส่งเตือน ไม่นับ quota หลัก
+      const warn = `⚠️ LINE OA "Loft Auto Report" quota เหลือ ${remaining} ข้อความ\n\n` +
+                   `📋 เตรียมสลับ OA:\n` +
+                   `1. เปิด LINE กลุ่มแม่บ้าน\n` +
+                   `2. ลบ OA "Loft Auto Report" ออกจากกลุ่ม\n` +
+                   `3. เพิ่ม OA สำรองเข้ากลุ่มแทน\n\n` +
+                   `⏳ ควรสลับก่อน quota หมด`;
+      linePushWithToken(ADMIN_USER, [{ type: "text", text: warn }], token).catch(() => {});
     }
     return linePushWithToken(to, messages, LINE_TOKEN);
   }
