@@ -901,9 +901,65 @@ app.post("/webhook", (req, res) => {
           if (event.type === "follow")   { await handleFollow(event); return; }
           if (event.type === "unfollow") { await handleUnfollow(event); return; }
           if (event.type === "postback") { await handlePostback(event); return; }
+          // ─── OA ถูกเพิ่ม/ลบออกจากกลุ่มแม่บ้าน → สลับ OA อัตโนมัติ ───
+          if (event.type === "join" && isGroup) {
+            const gid = event.source?.groupId || "";
+            if (gid === LINE_GROUP || gid === LINE_GROUP_BACKUP) {
+              // OA ถูก invite เข้ากลุ่ม → เช็คว่าเป็น OA ไหน แล้วตั้ง flag
+              // LINE_GROUP = OA หลัก, LINE_GROUP_BACKUP = OA สำรอง
+              if (gid === LINE_GROUP_BACKUP) {
+                // OA สำรองเข้ากลุ่มใหม่ → สลับไป backup
+                await redisSet("use_backup_oa", "1");
+                console.log("[OA] backup OA joined group → use_backup_oa=1");
+                await linePushWithToken(ADMIN_USER, [{ type: "text", text: "🔁 OA สำรองเข้ากลุ่มแม่บ้านแล้ว\n✅ ระบบสลับไปใช้ OA สำรองอัตโนมัติ" }], LINE_TOKEN_BACKUP || LINE_TOKEN).catch(() => {});
+              } else {
+                // OA หลักเข้ากลุ่ม → สลับกลับ primary
+                await redisSet("use_backup_oa", "0");
+                console.log("[OA] primary OA joined group → use_backup_oa=0");
+                await linePushWithToken(ADMIN_USER, [{ type: "text", text: "✅ OA หลักเข้ากลุ่มแม่บ้านแล้ว\nระบบกลับมาใช้ OA หลักอัตโนมัติ" }], LINE_TOKEN).catch(() => {});
+              }
+            }
+            return;
+          }
+          if (event.type === "leave" && isGroup) {
+            const gid = event.source?.groupId || "";
+            if (gid === LINE_GROUP) {
+              // OA หลักถูกลบออก → สลับไป backup
+              await redisSet("use_backup_oa", "1");
+              console.log("[OA] primary OA left group → use_backup_oa=1");
+            }
+            return;
+          }
+
           if (event.type === "message") {
             const uid = event.source?.userId || "";
-            console.log(`[Webhook] type=${event.type} source=${event.source?.type} userId=${uid} groupId=${event.source?.groupId||"-"} LINE_GROUP=${LINE_GROUP}`);
+            const gid = event.source?.groupId || "";
+            console.log(`[Webhook] type=${event.type} source=${event.source?.type} userId=${uid} groupId=${gid||"-"} LINE_GROUP=${LINE_GROUP}`);
+
+            // ─── Admin พิมพ์คำสั่งในกลุ่มแม่บ้าน ───
+            if (isGroup && event.message.type === "text" && uid === ADMIN_USER) {
+              const cmd = (event.message.text || "").trim().toLowerCase();
+              if (cmd === "/backup" || cmd === "/oa backup") {
+                await redisSet("use_backup_oa", "1");
+                await lineReply(event.replyToken, [{ type: "text", text: "✅ สลับไปใช้ OA สำรองแล้ว" }]);
+                return;
+              }
+              if (cmd === "/primary" || cmd === "/oa primary") {
+                await redisSet("use_backup_oa", "0");
+                await lineReply(event.replyToken, [{ type: "text", text: "✅ กลับมาใช้ OA หลักแล้ว" }]);
+                return;
+              }
+              if (cmd === "/oa" || cmd === "/oa status") {
+                const flag = await redisGet("use_backup_oa");
+                const using = flag === "1" ? "🔁 OA สำรอง" : "✅ OA หลัก";
+                await lineReply(event.replyToken, [{ type: "text", text: `📡 ใช้งานอยู่: ${using}` }]);
+                return;
+              }
+              // admin reply เลขห้องในกลุ่ม
+              await handleAdminReply(event.message.text || "", uid);
+              return;
+            }
+
             if (isUser && event.message.type === "text") {
               // ถ้าเป็นแอดมิน → จัดการ hotel เท่านั้น ไม่ส่งไป apartment
               if (ADMIN_USER && event.source.userId === ADMIN_USER) {
