@@ -1199,7 +1199,11 @@ cron.schedule("0 9 1 * *", async () => {
     const msg = {
       type: "text",
       text: "🔄 ต้นเดือนใหม่แล้ว quota LINE OA หลัก reset เป็น 300 แล้ว\n\n" +
-            "กดปุ่มด้านล่างเพื่อสลับกลับไปใช้ OA หลัก",
+            "📋 ขั้นตอน:\n" +
+            "1. เปิด LINE กลุ่มแม่บ้าน\n" +
+            "2. ลบ OA สำรองออกจากกลุ่ม\n" +
+            "3. เพิ่ม OA \"Loft Auto Report\" กลับเข้ากลุ่ม\n\n" +
+            "กดปุ่มด้านล่างหลังสลับเรียบร้อยแล้ว",
       quickReply: {
         items: [
           { type: "action", action: { type: "postback", label: "✅ กลับ OA หลัก", data: "action=USE_PRIMARY_OA" } },
