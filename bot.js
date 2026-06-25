@@ -31,7 +31,8 @@ const LINE_SECRET   = process.env.LINE_CHANNEL_SECRET               || "";
 const LINE_GROUP    = process.env.LINE_GROUP_ID                     || "";   // กลุ่มแม่บ้าน (ยังใช้สำหรับสรุปประจำวัน)
 const LINE_TOKEN_BACKUP = process.env.LINE_CHANNEL_ACCESS_TOKEN_BACKUP || ""; // OA สำรอง (เพิ่มเข้ากลุ่มแม่บ้านแทน OA หลักเมื่อ quota หมด)
 const LINE_GROUP_BACKUP = process.env.LINE_GROUP_ID_BACKUP          || "";   // group ID ที่ใช้ OA สำรอง (ถ้าต่างจาก LINE_GROUP)
-const ADMIN_USER    = process.env.ADMIN_USER_ID             || "";   // LINE User ID แอดมิน (รับแจ้งจองใหม่)
+const ADMIN_USER    = process.env.ADMIN_USER_ID             || "";
+const ADMIN_USER_2  = process.env.ADMIN_USER_ID_BACKUP        || "";   // LINE User ID แอดมิน (รับแจ้งจองใหม่)
 const SHEET_ID      = process.env.GOOGLE_SHEET_ID           || "";
 const SHEET_NAME    = process.env.GOOGLE_SHEET_NAME         || "Sheet1";
 const CRON_SCHED    = process.env.CRON_SCHEDULE             || "0 19 * * *";
@@ -906,7 +907,7 @@ app.post("/webhook-backup", (req, res) => {
           }
 
           // admin พิมพ์คำสั่งในกลุ่มผ่าน OA สำรอง
-          if (event.type === "message" && isGroup && event.message.type === "text" && uid === ADMIN_USER) {
+          if (event.type === "message" && isGroup && event.message.type === "text" && (uid === ADMIN_USER || uid === ADMIN_USER_2)) {
             const cmd = (event.message.text || "").trim().toLowerCase();
             if (cmd === "/backup" || cmd === "/oa backup") {
               await redisSet("use_backup_oa", "1");
