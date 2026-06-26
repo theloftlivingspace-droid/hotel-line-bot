@@ -96,8 +96,7 @@ function getSheets() {
 // ─────────────────────────────────────────────
 async function triggerStyleSheet1() {
   try {
-    await axios.post(GAS_STYLE_URL, { action: "styleSheet1" }, {
-      headers: { "Content-Type": "application/json" },
+    await axios.get(GAS_STYLE_URL + '?action=styleSheet1', {
       maxRedirects: 5,
       timeout: 30000,
     });
@@ -643,6 +642,7 @@ async function handleLineReply(messageText, sourceId) {
       "\u{1F4CB} " + (found.resId || "-")
     );
     console.log("ยกเลิก: " + found.resId + " | " + found.guest);
+    await triggerStyleSheet1();
     return;
   }
 
@@ -680,6 +680,7 @@ async function handleLineReply(messageText, sourceId) {
     if (isCancel) {
       // ห้อง cancel → ไม่ส่งอะไรไปกลุ่มแม่บ้านเลย
       console.log('cancel booking: skip group notify | ' + roomNumber + ' | ' + info.guest);
+      await triggerStyleSheet1();
       return;
     }
 
@@ -694,6 +695,7 @@ async function handleLineReply(messageText, sourceId) {
         await sendUrgentToGroup(roomNumber, info.guest, info.checkIn, info.note);
       }
     }
+    await triggerStyleSheet1();
   } catch (err) {
     console.error("reply error: " + err.message);
   }
