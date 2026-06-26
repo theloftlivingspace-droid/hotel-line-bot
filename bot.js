@@ -1255,7 +1255,6 @@ app.post("/api/send-maid-note", adminAuth, async (req, res) => {
   const lines = [];
   if (room)    lines.push(`🏠 ห้อง ${room}`);
   if (guest)   lines.push(`👤 ${guest}`);
-  if (checkin) lines.push(`📅 ${checkin}${checkout ? ' → ' + checkout : ''}`);
   lines.push(`📝 ${note}`);
   const msg = lines.join("\n");
   try {
