@@ -96,7 +96,8 @@ function getSheets() {
 // ─────────────────────────────────────────────
 async function triggerStyleSheet1() {
   try {
-    await axios.get(GAS_STYLE_URL + '?action=styleSheet1', {
+    await axios.post(GAS_STYLE_URL, { action: "styleSheet1" }, {
+      headers: { "Content-Type": "application/json" },
       maxRedirects: 5,
       timeout: 30000,
     });
