@@ -950,6 +950,19 @@ function closeLightbox(){
 document.addEventListener("keydown",e=>{if(e.key==="Escape")closeLightbox();});
 
 document.getElementById("token-input").addEventListener("keydown",e=>{if(e.key==="Enter")login();});
+
+// Auto-login from URL ?token=xxx (SSO from the-loft-admin)
+(function(){
+  const p=new URLSearchParams(window.location.search);
+  const t=p.get("token");
+  if(t){
+    document.getElementById("token-input").value=t;
+    // Clean token from URL without reload
+    const clean=window.location.pathname+(p.toString().replace(/token=[^&]*/,'').replace(/^&|&$/,'').replace(/&&/,'&')?'?'+p.toString().replace(/token=[^&]*/,'').replace(/^[&?]+|[&?]+$/g,''):'');
+    history.replaceState(null,'',clean);
+    login();
+  }
+})();
 </script>
 <!-- Modal เพิ่มการชำระเงินด้วยตนเอง -->
 <div class="modal-bg" id="manual-pay-modal">
