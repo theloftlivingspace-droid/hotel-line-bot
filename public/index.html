@@ -10,16 +10,16 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Noto Sans Thai','Sarabun',sans-serif;background:#f1f5f9;color:#0f172a;font-size:14px;height:100vh;display:flex;flex-direction:column}
-input,button,select,textarea{font-family:inherit;font-size:13px}
+body{font-family:'Noto Sans Thai','Sarabun',sans-serif;background:#f1f5f9;color:#0f172a;font-size:16px;height:100vh;display:flex;flex-direction:column}
+input,button,select,textarea{font-family:inherit;font-size:15px}
 .topbar{height:52px;background:#fff;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;padding:0 20px;gap:14px;flex-shrink:0;z-index:100}
 .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;color:#0f172a}
 .logo-icon{width:34px;height:34px;background:#0d9488;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:15px}
 .topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
-#status-dot{font-size:12px;color:#94a3b8}
+#status-dot{font-size:14px;color:#94a3b8}
 .app{display:flex;flex:1;overflow:hidden}
 .sidebar{width:200px;background:#fff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;transition:transform 0.25s ease}
-.sidebar-section{padding:16px 12px 6px;font-size:10px;color:#94a3b8;font-weight:700;letter-spacing:1.5px;text-transform:uppercase}
+.sidebar-section{padding:16px 12px 6px;font-size:12px;color:#94a3b8;font-weight:700;letter-spacing:1.5px;text-transform:uppercase}
 .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:199}
 .hamburger{display:none;align-items:center;justify-content:center;width:36px;height:36px;border:none;background:none;cursor:pointer;border-radius:7px;color:#64748b;font-size:20px;flex-shrink:0}
 .hamburger:hover{background:#f1f5f9}
@@ -30,68 +30,68 @@ input,button,select,textarea{font-family:inherit;font-size:13px}
   .sidebar-overlay.open{display:block}
   .main{padding:16px}
   .stats{grid-template-columns:repeat(2,1fr)}
-  .page-title{font-size:17px}
+  .page-title{font-size:19px}
 }
-.nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;margin:2px 8px;cursor:pointer;color:#64748b;font-size:13px;font-weight:500;border:none;background:none;width:calc(100% - 16px);text-align:left}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;margin:2px 8px;cursor:pointer;color:#64748b;font-size:15px;font-weight:500;border:none;background:none;width:calc(100% - 16px);text-align:left}
 .nav-item:hover{background:#f1f5f9;color:#0f172a}
 .nav-item.active{background:#f0fdfa;color:#0d9488;font-weight:600}
 .nav-item .icon{font-size:16px;width:20px;text-align:center;flex-shrink:0}
-.nav-badge{margin-left:auto;background:#ef4444;color:#fff;border-radius:100px;font-size:10px;font-weight:700;padding:1px 6px;min-width:18px;text-align:center}
-.sidebar-footer{margin-top:auto;padding:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.6}
+.nav-badge{margin-left:auto;background:#ef4444;color:#fff;border-radius:100px;font-size:12px;font-weight:700;padding:1px 6px;min-width:18px;text-align:center}
+.sidebar-footer{margin-top:auto;padding:12px;border-top:1px solid #e2e8f0;font-size:13px;color:#94a3b8;line-height:1.6}
 .main{flex:1;overflow-y:auto;padding:24px}
 .page{display:none}
 .page.active{display:block}
-.page-title{font-size:20px;font-weight:700;margin-bottom:16px}
+.page-title{font-size:22px;font-weight:700;margin-bottom:16px}
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
 .stat-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px}
 .stat-card .val{font-size:30px;font-weight:700;color:#0f172a;margin-bottom:2px}
-.stat-card .lbl{font-size:12px;color:#94a3b8;font-weight:500}
+.stat-card .lbl{font-size:14px;color:#94a3b8;font-weight:500}
 .stat-card.green .val{color:#0d9488}
 .stat-card.blue .val{color:#3b82f6}
 .panel{background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:16px}
-.panel-head{padding:14px 16px;border-bottom:1px solid #e2e8f0;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.panel-head{padding:14px 16px;border-bottom:1px solid #e2e8f0;font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .panel-body{padding:16px}
-table{width:100%;border-collapse:collapse;font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:14px}
 th{background:#f8fafc;padding:8px 12px;text-align:left;color:#64748b;font-weight:600;border-bottom:1px solid #e2e8f0;white-space:nowrap}
 td{padding:8px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:#fafafa}
-.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:7px;border:none;cursor:pointer;font-weight:500;font-size:13px;font-family:inherit}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:7px;border:none;cursor:pointer;font-weight:500;font-size:15px;font-family:inherit}
 .btn:hover{opacity:0.85}
 .btn-primary{background:#0d9488;color:#fff}
 .btn-ghost{background:transparent;color:#64748b;border:1px solid #e2e8f0}
 .btn-ghost:hover{background:#f8fafc}
 .btn-danger{background:transparent;color:#b91c1c;border:1px solid #fca5a5}
 .btn-success{background:transparent;color:#15803d;border:1px solid #86efac}
-.btn-sm{padding:4px 10px;font-size:11px;border-radius:6px}
+.btn-sm{padding:4px 10px;font-size:13px;border-radius:6px}
 .btn-green{background:#06C755;color:#fff}
 .input{border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;background:#f8fafc;width:100%;outline:none;color:#0f172a}
 .input:focus{border-color:#0d9488;background:#fff}
 textarea.input{resize:vertical;line-height:1.7}
-.pill{display:inline-block;padding:2px 9px;border-radius:100px;font-size:11px;font-weight:600}
+.pill{display:inline-block;padding:2px 9px;border-radius:100px;font-size:13px;font-weight:600}
 .pill-green{background:#dcfce7;color:#15803d}
 .pill-gray{background:#f1f5f9;color:#64748b}
 .pill-yellow{background:#fef9c3;color:#a16207}
 .pill-red{background:#fee2e2;color:#b91c1c}
-.empty{padding:32px;text-align:center;color:#94a3b8;font-size:13px}
-.upload-label{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:7px;border:1px solid #f59e0b;background:#fffbeb;color:#92400e;cursor:pointer;font-size:13px;font-weight:500;font-family:inherit}
+.empty{padding:32px;text-align:center;color:#94a3b8;font-size:15px}
+.upload-label{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:7px;border:1px solid #f59e0b;background:#fffbeb;color:#92400e;cursor:pointer;font-size:15px;font-weight:500;font-family:inherit}
 .upload-label:hover{background:#fef9c3}
 .progress-bar{height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin-top:8px}
 .progress-fill{height:100%;background:#0d9488;border-radius:3px;transition:width 0.3s}
-.log-entry{padding:10px 16px;border-bottom:1px solid #f1f5f9;display:flex;gap:16px;font-size:12px;align-items:center}
+.log-entry{padding:10px 16px;border-bottom:1px solid #f1f5f9;display:flex;gap:16px;font-size:14px;align-items:center}
 .log-entry:last-child{border-bottom:none}
 .log-date{color:#94a3b8;min-width:160px;flex-shrink:0}
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;z-index:999}
 .modal-box{background:#fff;border-radius:14px;padding:24px;width:min(500px,93vw);box-shadow:0 8px 32px rgba(0,0,0,0.18)}
 .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
-.modal-title{font-size:15px;font-weight:700}
+.modal-title{font-size:17px;font-weight:700}
 .modal-close{border:none;background:none;font-size:22px;cursor:pointer;color:#94a3b8;line-height:1}
 #login-section{display:flex;flex:1;align-items:center;justify-content:center}
 .login-box{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:32px;width:380px;box-shadow:0 4px 24px rgba(0,0,0,0.06)}
 .login-logo{text-align:center;margin-bottom:24px}
 .login-logo .icon{width:56px;height:56px;background:#0d9488;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-weight:800;margin-bottom:10px}
-.login-logo h2{font-size:18px;font-weight:700}
-.login-logo p{font-size:12px;color:#94a3b8;margin-top:3px}
+.login-logo h2{font-size:20px;font-weight:700}
+.login-logo p{font-size:14px;color:#94a3b8;margin-top:3px}
 .hidden{display:none !important}
 .info-box{background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;padding:14px 16px;display:flex;gap:12px;align-items:flex-start}
 .info-box .ico{font-size:20px;flex-shrink:0}
@@ -132,7 +132,7 @@ textarea.input{resize:vertical;line-height:1.7}
       <p>ณัฐนาฏ อพาร์ทเมนท์</p>
     </div>
     <div style="margin-bottom:12px">
-      <div style="font-size:12px;color:#64748b;margin-bottom:6px;font-weight:500">Admin Token</div>
+      <div style="font-size:14px;color:#64748b;margin-bottom:6px;font-weight:500">Admin Token</div>
       <input type="password" id="token-input" class="input" placeholder="ใส่ Admin Token">
     </div>
     <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="login()">เข้าสู่ระบบ</button>
@@ -164,7 +164,7 @@ textarea.input{resize:vertical;line-height:1.7}
     <div class="page active" id="page-dashboard">
       <div class="page-title">ภาพรวม</div>
 
-      <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">ผู้พักอาศัย</div>
+      <div style="font-size:13px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">ผู้พักอาศัย</div>
       <div class="stats" style="margin-bottom:20px">
         <div class="stat-card"><div class="val" id="s-total">—</div><div class="lbl">ห้องทั้งหมด</div></div>
         <div class="stat-card green"><div class="val" id="s-reg">—</div><div class="lbl">ลงทะเบียน LINE แล้ว</div></div>
@@ -172,30 +172,30 @@ textarea.input{resize:vertical;line-height:1.7}
         <div class="stat-card"><div class="val" id="s-active">—</div><div class="lbl">Active Users</div></div>
       </div>
 
-      <div style="font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">ค่าเช่าเดือนนี้</div>
+      <div style="font-size:13px;font-weight:700;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">ค่าเช่าเดือนนี้</div>
       <div class="stats" style="margin-bottom:8px">
         <div class="stat-card blue"><div class="val" id="s-billed">—</div><div class="lbl">ห้องที่มีบิล</div></div>
         <div class="stat-card green"><div class="val" id="s-paid">—</div><div class="lbl">จ่ายแล้ว</div></div>
         <div class="stat-card" style="border-left:3px solid #f59e0b"><div class="val" id="s-pending" style="color:#d97706">—</div><div class="lbl">รอชำระ</div></div>
         <div class="stat-card" style="border-left:3px solid #0d9488;grid-column:span 2">
           <div style="display:flex;align-items:baseline;gap:6px">
-            <div class="val" id="s-paid-amount" style="color:#0d9488;font-size:20px">—</div>
-            <div style="font-size:14px;color:#94a3b8">/</div>
-            <div class="val" id="s-total-amount" style="font-size:16px;color:#64748b">—</div>
+            <div class="val" id="s-paid-amount" style="color:#0d9488;font-size:22px">—</div>
+            <div style="font-size:16px;color:#94a3b8">/</div>
+            <div class="val" id="s-total-amount" style="font-size:18px;color:#64748b">—</div>
           </div>
           <div class="lbl">ยอดรับแล้ว / ยอดรวม (฿)</div>
         </div>
       </div>
-      <div id="s-cycle-label" style="font-size:11px;color:#94a3b8;margin-bottom:20px;padding-left:2px"></div>
+      <div id="s-cycle-label" style="font-size:13px;color:#94a3b8;margin-bottom:20px;padding-left:2px"></div>
       <div class="panel">
         <div class="panel-head">เชิญผู้เช่าลงทะเบียน LINE</div>
         <div class="panel-body">
           <div class="info-box">
             <div class="ico">💡</div>
             <div>
-              <div style="font-size:13px;font-weight:600;margin-bottom:6px">วิธีให้ผู้เช่าลงทะเบียนห้อง</div>
-              <div style="font-size:12px;color:#64748b;line-height:1.8;margin-bottom:10px">ส่ง Broadcast ผ่าน <strong>LINE OA Manager</strong> ขอให้ผู้เช่าพิมพ์เลขห้องกลับมา เมื่อพิมพ์ → Webhook เก็บ LINE ID อัตโนมัติค่ะ</div>
-              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:12px;color:#374151;line-height:1.8;margin-bottom:12px">สวัสดีค่ะ ทางอพาร์ทเมนท์เปิดระบบแจ้งค่าเช่าผ่าน LINE แล้วค่ะ กรุณาพิมพ์ <strong>"เลขห้อง"</strong> เช่น 101, 203, 315 ค่ะ</div>
+              <div style="font-size:15px;font-weight:600;margin-bottom:6px">วิธีให้ผู้เช่าลงทะเบียนห้อง</div>
+              <div style="font-size:14px;color:#64748b;line-height:1.8;margin-bottom:10px">ส่ง Broadcast ผ่าน <strong>LINE OA Manager</strong> ขอให้ผู้เช่าพิมพ์เลขห้องกลับมา เมื่อพิมพ์ → Webhook เก็บ LINE ID อัตโนมัติค่ะ</div>
+              <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:14px;color:#374151;line-height:1.8;margin-bottom:12px">สวัสดีค่ะ ทางอพาร์ทเมนท์เปิดระบบแจ้งค่าเช่าผ่าน LINE แล้วค่ะ กรุณาพิมพ์ <strong>"เลขห้อง"</strong> เช่น 101, 203, 315 ค่ะ</div>
               <a href="https://manager.line.biz" target="_blank" class="btn btn-green" style="text-decoration:none">เปิด LINE OA Manager ↗</a>
             </div>
           </div>
@@ -210,14 +210,14 @@ textarea.input{resize:vertical;line-height:1.7}
         <div class="panel-head">
           <span>อัปเดตและส่งบิล</span>
           <div style="display:flex;gap:8px;align-items:center">
-            <span id="bill-result" style="font-size:12px;color:#64748b"></span>
+            <span id="bill-result" style="font-size:14px;color:#64748b"></span>
             <label class="upload-label" id="upload-btn">📂 อัปโหลด Excel เดือนใหม่<input type="file" accept=".xlsx,.xls" style="display:none" onchange="uploadInvoice(this)"></label>
             <button class="btn btn-primary" onclick="sendAllBills()" id="send-all-btn">📤 ส่งบิลทุกห้อง</button>
           </div>
         </div>
-        <div style="padding:10px 16px;font-size:12px;color:#64748b;border-bottom:1px solid #e2e8f0">อัปโหลดไฟล์ Excel จาก Apartmentery → archive เดือนเก่า + อัปเดตยอดใหม่ → ส่งบิลทุกห้องที่ลงทะเบียนแล้ว</div>
+        <div style="padding:10px 16px;font-size:14px;color:#64748b;border-bottom:1px solid #e2e8f0">อัปโหลดไฟล์ Excel จาก Apartmentery → archive เดือนเก่า + อัปเดตยอดใหม่ → ส่งบิลทุกห้องที่ลงทะเบียนแล้ว</div>
         <div id="bill-progress" class="hidden" style="padding:10px 16px;border-bottom:1px solid #e2e8f0">
-          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>กำลังส่ง…</span><span id="bill-progress-text">0/0</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px"><span>กำลังส่ง…</span><span id="bill-progress-text">0/0</span></div>
           <div class="progress-bar"><div class="progress-fill" id="bill-progress-bar" style="width:0%"></div></div>
         </div>
         <div style="overflow-x:auto">
@@ -244,26 +244,26 @@ textarea.input{resize:vertical;line-height:1.7}
 <!-- Modal เพิ่มห้อง -->
 <div id="add-room-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:14px;padding:24px;width:420px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
-    <div style="font-weight:700;font-size:16px;margin-bottom:16px">➕ เพิ่มห้องใหม่</div>
+    <div style="font-weight:700;font-size:18px;margin-bottom:16px">➕ เพิ่มห้องใหม่</div>
     <div style="display:flex;flex-direction:column;gap:12px">
       <div>
-        <div style="font-size:12px;color:#64748b;margin-bottom:4px">เลขห้อง *</div>
+        <div style="font-size:14px;color:#64748b;margin-bottom:4px">เลขห้อง *</div>
         <input id="new-room-number" class="input" placeholder="เช่น 303" type="text">
       </div>
       <div>
-        <div style="font-size:12px;color:#64748b;margin-bottom:4px">ชื่อผู้เช่า *</div>
+        <div style="font-size:14px;color:#64748b;margin-bottom:4px">ชื่อผู้เช่า *</div>
         <input id="new-room-tenant" class="input" placeholder="ชื่อ-นามสกุล" type="text">
       </div>
       <div>
-        <div style="font-size:12px;color:#64748b;margin-bottom:4px">ยอดค่าเช่า (฿) *</div>
+        <div style="font-size:14px;color:#64748b;margin-bottom:4px">ยอดค่าเช่า (฿) *</div>
         <input id="new-room-amount" class="input" placeholder="เช่น 3500" type="number">
       </div>
       <div>
-        <div style="font-size:12px;color:#64748b;margin-bottom:4px">ลิงก์ใบแจ้งหนี้</div>
+        <div style="font-size:14px;color:#64748b;margin-bottom:4px">ลิงก์ใบแจ้งหนี้</div>
         <input id="new-room-invoice" class="input" placeholder="https://aprty.co/i/..." type="text">
       </div>
       <div>
-        <div style="font-size:12px;color:#64748b;margin-bottom:4px">LINE User ID (ถ้ามี)</div>
+        <div style="font-size:14px;color:#64748b;margin-bottom:4px">LINE User ID (ถ้ามี)</div>
         <input id="new-room-lineid" class="input" placeholder="Uxxxxxxxxxxxxxxxxx" type="text">
       </div>
       <div id="add-room-error" style="color:#b91c1c;font-size:12px;display:none"></div>
@@ -321,11 +321,11 @@ textarea.input{resize:vertical;line-height:1.7}
       <div class="panel" style="margin-bottom:16px">
         <div class="panel-head">Broadcast ถึงผู้เช่าทุกห้อง</div>
         <div class="panel-body">
-          <div style="font-size:12px;color:#64748b;margin-bottom:10px">ส่งถึงทุกห้องที่ลงทะเบียน LINE แล้วเท่านั้น</div>
+          <div style="font-size:14px;color:#64748b;margin-bottom:10px">ส่งถึงทุกห้องที่ลงทะเบียน LINE แล้วเท่านั้น</div>
           <textarea id="broadcast-msg" class="input" rows="5" placeholder="พิมพ์ข้อความที่ต้องการส่งถึงผู้เช่าทุกห้อง…"></textarea>
           <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
             <button class="btn btn-primary" onclick="sendBroadcast()">📤 ส่งทันที</button>
-            <span id="broadcast-result" style="font-size:12px;color:#64748b"></span>
+            <span id="broadcast-result" style="font-size:14px;color:#64748b"></span>
           </div>
         </div>
       </div>
@@ -335,9 +335,9 @@ textarea.input{resize:vertical;line-height:1.7}
           <div class="info-box">
             <div class="ico">📲</div>
             <div>
-              <div style="font-size:13px;font-weight:600;margin-bottom:6px">ส่งลิงค์ให้ผู้เช่า Follow LINE OA</div>
+              <div style="font-size:15px;font-weight:600;margin-bottom:6px">ส่งลิงค์ให้ผู้เช่า Follow LINE OA</div>
               <div style="font-size:16px;font-weight:700;color:#0d9488;font-family:monospace;margin-bottom:6px">https://lin.ee/IcSjtUD</div>
-              <div style="font-size:12px;color:#64748b">เมื่อ Follow แล้วพิมพ์เลขห้อง → ระบบเก็บ LINE ID อัตโนมัติค่ะ</div>
+              <div style="font-size:14px;color:#64748b">เมื่อ Follow แล้วพิมพ์เลขห้อง → ระบบเก็บ LINE ID อัตโนมัติค่ะ</div>
             </div>
           </div>
         </div>
@@ -351,7 +351,7 @@ textarea.input{resize:vertical;line-height:1.7}
 <div class="modal-bg" id="msg-modal">
   <div class="modal-box">
     <div class="modal-head">
-      <div><div class="modal-title">ส่งข้อความ</div><div style="font-size:12px;color:#64748b;margin-top:2px" id="modal-room"></div></div>
+      <div><div class="modal-title">ส่งข้อความ</div><div style="font-size:14px;color:#64748b;margin-top:2px" id="modal-room"></div></div>
       <button class="modal-close" onclick="closeMsgModal()">×</button>
     </div>
     <textarea id="modal-msg" class="input" rows="6" placeholder="พิมพ์ข้อความที่ต้องการส่งถึงผู้เช่าห้องนี้…"></textarea>
@@ -359,7 +359,7 @@ textarea.input{resize:vertical;line-height:1.7}
     <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
       <button id="modal-send-btn" class="btn btn-primary" onclick="sendModalMsg()">ส่ง</button>
       <button class="btn btn-ghost" onclick="closeMsgModal()">ยกเลิก</button>
-      <span id="modal-result" style="font-size:12px;margin-left:4px"></span>
+      <span id="modal-result" style="font-size:14px;margin-left:4px"></span>
     </div>
   </div>
 </div>
