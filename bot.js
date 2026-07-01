@@ -778,14 +778,12 @@ function getBillingCycle(now=new Date()){
 async function getPaymentStatus(roomNumbers) {
   const nowBKK = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
   const dayNow = nowBKK.getDate();
-  const curMonth = nowBKK.getMonth(), curYear = nowBKK.getFullYear();
   const payments = await loadPayments();
-  // เช็คเฉพาะ confirmed payment ของเดือนปัจจุบัน (เดือนก่อนถูก archive ตอนโหลดบิลใหม่แล้ว)
+  // เช็คเฉพาะ confirmed payment ที่ยังไม่ถูก archive
+  // (ไม่ผูกกับเดือนปฏิทินจริง — รอบบิลจะเปลี่ยนก็ต่อเมื่อโหลดบิลเดือนใหม่เข้าไปเท่านั้น
+  //  ซึ่งตอนนั้น upload-invoice จะ archive confirmed payment เก่าให้อัตโนมัติ)
   const confirmedPayment = payments.find(p => {
     if (p.status !== "confirmed") return false;
-    const d = new Date(p.receivedAt);
-    const dBKK = new Date(d.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
-    if (dBKK.getMonth() !== curMonth || dBKK.getFullYear() !== curYear) return false;
     const paidRooms = p.roomNumber.split(",").map(r => r.trim());
     return roomNumbers.some(rn => paidRooms.includes(rn));
   });
@@ -804,17 +802,11 @@ async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
   if (!isTest && !onlyRoom && day !== 5 && (day < 8 || day > 15)) return;
   try {
     const rooms = await loadRooms(), payments = await loadPayments();
-    const nowBKK = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
-    const curMonth = nowBKK.getMonth(), curYear = nowBKK.getFullYear();
+    // ไม่ผูกกับเดือนปฏิทินจริง — ใช้สถานะ confirmed ล้วนๆ (archive เกิดตอนโหลดบิลใหม่เท่านั้น)
     const paidRooms = new Set(
       isTest ? [] :
       payments
-        .filter(p => {
-          if (p.status !== "confirmed") return false;
-          const d = new Date(p.updatedAt || p.receivedAt);
-          const dBKK = new Date(d.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
-          return dBKK.getMonth() === curMonth && dBKK.getFullYear() === curYear;
-        })
+        .filter(p => p.status === "confirmed")
         .flatMap(p => p.roomNumber.split(",").map(r => r.trim()))
     );
     const unpaidRooms = Object.values(rooms).filter(r => r.lineUserId && !paidRooms.has(r.roomNumber) && (!onlyRoom || r.roomNumber === onlyRoom));
