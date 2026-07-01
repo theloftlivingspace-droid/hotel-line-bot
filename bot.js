@@ -710,11 +710,14 @@ async function handlePostback(event) {
     const baseTotal = myRooms.reduce((s, r) => s + Number(r.amount), 0);
     const grandTotal = baseTotal + fine;
     const grandTotalStr = grandTotal.toLocaleString("th-TH", { minimumFractionDigits: 2 });
+    // ยอดที่ชำระแล้วจริง ต้องใช้ confirmedAmount (จากสลิป) ไม่ใช่ยอดบิลปัจจุบัน
+    // เพราะถ้ายังไม่โหลดบิลเดือนใหม่ ยอด room.amount อาจไม่ตรงกับที่จ่ายจริง
+    const paidTotalStr = (confirmedAmount || grandTotal).toLocaleString("th-TH", { minimumFractionDigits: 2 });
     const summary = myRooms.map(r => `🏠 ห้อง ${r.roomNumber}: ${Number(r.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`).join("\n");
 
     // ✅ เพิ่ม confirmed check สำหรับหลายห้อง
     const statusText = confirmed
-      ? `✅ ชำระแล้ว ${grandTotalStr} บาท\n\nไม่ต้องดำเนินการใดๆ เพิ่มเติมค่ะ 😊`
+      ? `✅ ชำระแล้ว ${paidTotalStr} บาท\n\nไม่ต้องดำเนินการใดๆ เพิ่มเติมค่ะ 😊`
       : `${summary}${fineNote}\n──────────────────\nยอดรวมที่ต้องชำระ: ${grandTotalStr} บาท\nกำหนดชำระ: วันที่ 7 ของทุกเดือน`;
 
     const billBubbles = myRooms.map(r => ({
