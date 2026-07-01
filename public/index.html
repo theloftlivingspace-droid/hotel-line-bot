@@ -662,7 +662,8 @@ async function submitAddRoom(){
 
 async function loadPayments(){
   try{
-    const payments=await api("/api/payments");
+    const allPayments=await api("/api/payments");
+    const payments=allPayments.filter(p=>p.status!=="archived");
     const el=document.getElementById("payments-list");
     const pending=payments.filter(p=>p.status==="pending_review");
     const badge=document.getElementById("badge-payments");
@@ -677,8 +678,8 @@ async function loadPayments(){
             <div style="font-size:12px;color:#64748b;margin-top:1px">${p.tenantName||""} · ${new Date(p.receivedAt).toLocaleString("th-TH")}</div>
           </div>
           <div style="display:flex;gap:5px;align-items:center;flex-shrink:0">
-            <span class="pill ${p.status==="confirmed"?"pill-green":p.status==="rejected"?"pill-red":"pill-yellow"}">
-              ${p.status==="confirmed"?"✓ ยืนยันแล้ว":p.status==="rejected"?"✗ ปฏิเสธ":"⏳ รอตรวจสอบ"}
+            <span class="pill ${p.status==="confirmed"?"pill-green":p.status==="rejected"?"pill-red":p.status==="archived"?"pill-gray":"pill-yellow"}">
+              ${p.status==="confirmed"?"✓ ยืนยันแล้ว":p.status==="rejected"?"✗ ปฏิเสธ":p.status==="archived"?"📦 เก็บถาวร":"⏳ รอตรวจสอบ"}
             </span>
           </div>
         </div>
