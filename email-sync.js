@@ -161,8 +161,8 @@ async function getAvailableRooms(sheets, candidateRooms, newCheckIn, newCheckOut
     if (!row || row.length < 4) continue;
 
     const roomCol  = (row[0] || "").trim();
-    // ข้ามแถวที่รอยืนยัน/ยกเลิก/ว่าง
-    if (!roomCol || roomCol === "รอยืนยัน" || roomCol === "ยกเลิก") continue;
+    // ข้ามแถวที่รอยืนยัน/ยกเลิก/ว่าง (รวมถึง "203 ยกเลิก" / "203 cancel")
+    if (!roomCol || roomCol === "รอยืนยัน" || /cancel|ยกเลิก/i.test(roomCol)) continue;
 
     // roomCol อาจเป็น "103 Elegance" → ดึงเฉพาะตัวเลขหน้า
     const roomNum = roomCol.split(/\s+/)[0];
@@ -630,11 +630,17 @@ async function handleLineReply(messageText, sourceId) {
       await linePush(ADMIN_ID, "\u274C ไม่พบการจองของ " + cancelMatch[1].trim());
       return;
     }
-    await sheets.spreadsheets.values.update({
+    // เปลี่ยน checkout เป็นวันนี้ (Bangkok) เพื่อปลดล็อคห้องให้จองใหม่ได้ทันที
+    const todayBKK = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Bangkok" }).slice(0, 10);
+    await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: SHEET_ID,
-      range: SHEET_NAME + "!A" + (found.rowIdx + 1),
-      valueInputOption: "RAW",
-      requestBody: { values: [["ยกเลิก"]] },
+      requestBody: {
+        valueInputOption: "RAW",
+        data: [
+          { range: SHEET_NAME + "!A" + (found.rowIdx + 1), values: [["ยกเลิก"]] },
+          { range: SHEET_NAME + "!D" + (found.rowIdx + 1), values: [[todayBKK]] },
+        ],
+      },
     });
     await linePush(ADMIN_ID,
       "\u2705 ยกเลิกแล้ว\n" +
