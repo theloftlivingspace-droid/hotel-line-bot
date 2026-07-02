@@ -305,7 +305,8 @@ function normalizeDate(str) {
   return str;
 }
 function filterByDate(rows, targetDate) {
-  const checkIns = [], checkOuts = [];
+  const checkIns = [];
+  const checkOuts = [];
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row || row.length < 4) continue;
@@ -335,9 +336,9 @@ function filterByDate(rows, targetDate) {
                      /ABB-/i.test(resId)   || /airbnb/i.test(resId);
     const displayNote = (!isAirbnb && note) ? note : "";
     if (checkIn === targetDate)  checkIns.push({ room, guest, note: displayNote });
-    // ไม่รวม checkOuts — ไม่ส่งข้อความเช็คเอาท์ไปกลุ่มแม่บ้านอีก
+    if (checkOut === targetDate) checkOuts.push({ room, guest, note: displayNote });
   }
-  return { checkIns };
+  return { checkIns, checkOuts };
 }
 function formatThaiDate(iso) {
   const M = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
@@ -345,13 +346,17 @@ function formatThaiDate(iso) {
   const d = new Date(iso + "T00:00:00");
   return "วัน" + D[d.getDay()] + "ที่ " + d.getDate() + " " + M[d.getMonth()] + " " + (d.getFullYear() + 543);
 }
-function buildHotelMessage(checkIns, targetDate) {
+function buildHotelMessage(checkIns, checkOuts, targetDate) {
   const sep = "─────────────────────────";
   let msg = "\n🏨 รายการห้องพักวันพรุ่งนี้\n📅 " + formatThaiDate(targetDate) + "\n" + sep + "\n";
   if (checkIns.length > 0) {
     msg += "\n✅ เช็คอิน (" + checkIns.length + " ห้อง)\n";
     checkIns.forEach(r => { msg += "  🔑 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
   } else { msg += "\n✅ เช็คอิน : ไม่มี\n"; }
+  if (checkOuts.length > 0) {
+    msg += "\n🚪 เช็คเอาท์ (" + checkOuts.length + " ห้อง)\n";
+    checkOuts.forEach(r => { msg += "  🧹 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
+  } else { msg += "\n🚪 เช็คเอาท์ : ไม่มี\n"; }
   msg += sep + "\n💌 ส่งอัตโนมัติโดยระบบโรงแรม";
   return msg;
 }
@@ -360,8 +365,8 @@ async function runHotelJob() {
   try {
     const tomorrow = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
     const rows = await fetchSheetData();
-    const { checkIns } = filterByDate(rows, tomorrow);
-    const msg = buildHotelMessage(checkIns, tomorrow);
+    const { checkIns, checkOuts } = filterByDate(rows, tomorrow);
+    const msg = buildHotelMessage(checkIns, checkOuts, tomorrow);
     await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
     console.log("ส่ง LINE สำเร็จ");
   } catch (err) {
