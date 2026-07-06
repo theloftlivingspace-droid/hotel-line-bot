@@ -1346,11 +1346,18 @@ ensureDir(DATA_DIR);
 
 const { syncEmails, handleLineReply: emailHandleReply } = require("./email-sync");
 console.log("Email Sync พร้อมทำงาน (ทุก 30 นาที)");
+
+const { registerPushRoutes, runBadgeCheck } = require("./push-badge");
+registerPushRoutes(app);
+console.log("Push badge (booking/invoice/stock) พร้อมทำงาน (ทุก 5 นาที)");
 console.log("GOOGLE_SHEET_ID:", process.env.GOOGLE_SHEET_ID || "(ไม่พบ)");
 console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่พบ)");
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON:", process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? `OK (${process.env.GOOGLE_SERVICE_ACCOUNT_JSON.length} chars)` : "(ไม่พบ)");
 
 startWebhookServer();
+
+// Push badge check: ทุก 5 นาที (booking to add / invoice to create / stock out)
+cron.schedule("*/5 * * * *", () => runBadgeCheck().catch((e) => console.error("[push-badge] cron error:", e.message)));
 
 // Hotel cron 19:00
 cron.schedule(CRON_SCHED, runHotelJob, { timezone: "Asia/Bangkok" });
