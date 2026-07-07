@@ -732,8 +732,13 @@ async function loadPayments(){
             ${p.bankName||p.date ? `<div style="font-size:11px;color:#94a3b8;line-height:1.7">${p.bankName?`ธนาคาร: ${p.bankName}<br>`:""}${p.date?`วันที่: ${p.date}`:""}</div>` : ""}
             <!-- ปุ่ม action -->
             <div style="display:flex;gap:6px;margin-top:10px">
-              <button class="btn btn-success btn-sm" onclick="updatePayment('${p.id}','confirmed','',this)">✓ ยืนยัน</button>
-              <button class="btn btn-danger btn-sm" onclick="rejectPayment('${p.id}',this)">✗ ปฏิเสธ</button>
+              ${p.status==="pending_review" ? `
+                <button class="btn btn-success btn-sm" onclick="updatePayment('${p.id}','confirmed','',this)">✓ ยืนยัน</button>
+                <button class="btn btn-danger btn-sm" onclick="rejectPayment('${p.id}',this)">✗ ปฏิเสธ</button>
+              ` : `
+                <button class="btn btn-sm" disabled style="background:#cbd5e1;border-color:#cbd5e1;color:#64748b;opacity:0.6;cursor:not-allowed;pointer-events:none">✓ ยืนยัน</button>
+                <button class="btn btn-sm" disabled style="background:#cbd5e1;border-color:#cbd5e1;color:#64748b;opacity:0.6;cursor:not-allowed;pointer-events:none">✗ ปฏิเสธ</button>
+              `}
               <button class="btn btn-sm" style="background:transparent;color:#94a3b8;border:1px solid #e2e8f0" onclick="deleteOnePayment('${p.id}','${p.roomNumber}')">🗑</button>
             </div>
           </div>
