@@ -1284,7 +1284,7 @@ app.post("/api/checkout-notify", adminAuth, async (req, res) => {
   const { room, guest, checkin, checkout } = req.body;
   if (!room || !guest) return res.status(400).json({ ok: false, error: "room and guest required" });
   const msg = [
-    "🧳 Checkout ก่อนกำหนด",
+    "🧳 Checkout แล้ว",
     `🏠 ห้อง ${room}`,
     `👤 ${guest}`,
     `📅 ${checkin} → ${checkout}`,
