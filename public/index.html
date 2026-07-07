@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Billing Console — Loft</title>
 <link rel="apple-touch-icon" href="/icons/icon-billing.png">
+<link rel="manifest" href="/manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Billing">
 <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -106,6 +107,7 @@ textarea.input{resize:vertical;line-height:1.7}
     Loft Auto Report
   </div>
   <div class="topbar-right">
+    <button id="push-bell" onclick="togglePush()" title="แจ้งเตือนสลิปใหม่" style="border:none;background:none;cursor:pointer;font-size:19px;padding:4px 6px;border-radius:8px;line-height:1">🔕</button>
     <span id="status-dot">ยังไม่ได้ login</span>
   </div>
 </div>
@@ -417,6 +419,7 @@ async function login(){
   TOKEN=document.getElementById("token-input").value.trim();
   try{
     const s=await api("/api/stats");
+    localStorage.setItem("billingToken",TOKEN);
     document.getElementById("login-section").classList.add("hidden");
     document.getElementById("app-section").classList.remove("hidden");
     document.getElementById("status-dot").innerHTML=`<span style="color:#0d9488;font-weight:600">● เชื่อมต่อแล้ว</span>`;
@@ -424,7 +427,58 @@ async function login(){
     loadRooms();
     loadPayments();
     loadMoveouts();
+    registerSW();
+    refreshBellIcon();
   }catch{alert("Token ไม่ถูกต้อง หรือ Server ไม่ตอบสนอง");}
+}
+
+// ─── Push notifications (new-slip alerts) ──────────────────────────────────
+function urlBase64ToUint8Array(base64String){
+  const padding="=".repeat((4-base64String.length%4)%4);
+  const base64=(base64String+padding).replace(/-/g,"+").replace(/_/g,"/");
+  const rawData=atob(base64);
+  const arr=new Uint8Array(rawData.length);
+  for(let i=0;i<rawData.length;++i) arr[i]=rawData.charCodeAt(i);
+  return arr;
+}
+async function registerSW(){
+  if(!("serviceWorker" in navigator)) return null;
+  try{ return await navigator.serviceWorker.register("/sw.js"); }
+  catch(e){ console.error("[push] SW register failed",e); return null; }
+}
+async function refreshBellIcon(){
+  const bell=document.getElementById("push-bell");
+  if(!bell) return;
+  if(!("serviceWorker" in navigator) || !("PushManager" in window)){ bell.style.display="none"; return; }
+  const reg=await navigator.serviceWorker.getRegistration();
+  const sub=reg && await reg.pushManager.getSubscription();
+  bell.textContent = sub ? "🔔" : "🔕";
+}
+async function togglePush(){
+  if(!("serviceWorker" in navigator) || !("PushManager" in window)){
+    alert("อุปกรณ์นี้ไม่รองรับการแจ้งเตือนแบบนี้\n\niPhone: กด Share แล้วเลือก \"Add to Home Screen\" ก่อน แล้วเปิดใช้งานจากไอคอนบนหน้า Home Screen");
+    return;
+  }
+  const reg=await registerSW();
+  if(!reg){ alert("ลงทะเบียน Service Worker ไม่สำเร็จ"); return; }
+  const existing=await reg.pushManager.getSubscription();
+  if(existing){
+    try{
+      await fetch("/billing/push/unsubscribe",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({endpoint:existing.endpoint})});
+      await existing.unsubscribe();
+    }catch(e){ console.error("[push] unsubscribe failed",e); }
+    await refreshBellIcon();
+    return;
+  }
+  const perm=await Notification.requestPermission();
+  if(perm!=="granted"){ alert("ไม่ได้รับอนุญาตให้แจ้งเตือน"); return; }
+  try{
+    const {publicKey}=await (await fetch("/billing/push/vapid-public-key")).json();
+    if(!publicKey){ alert("ระบบแจ้งเตือนยังไม่พร้อมใช้งาน"); return; }
+    const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(publicKey)});
+    await fetch("/billing/push/subscribe",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(sub.toJSON())});
+  }catch(e){ console.error("[push] subscribe failed",e); alert("เปิดแจ้งเตือนไม่สำเร็จ ลองใหม่อีกครั้ง"); }
+  await refreshBellIcon();
 }
 
 function updateStats(s){
@@ -982,7 +1036,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape")closeLightbox();});
 
 document.getElementById("token-input").addEventListener("keydown",e=>{if(e.key==="Enter")login();});
 
-// Auto-login from URL ?token=xxx (SSO from the-loft-admin)
+// Auto-login from URL ?token=xxx (SSO from the-loft-admin), else saved token
 (function(){
   const p=new URLSearchParams(window.location.search);
   const t=p.get("token");
@@ -992,6 +1046,9 @@ document.getElementById("token-input").addEventListener("keydown",e=>{if(e.key==
     const clean=window.location.pathname+(p.toString().replace(/token=[^&]*/,'').replace(/^&|&$/,'').replace(/&&/,'&')?'?'+p.toString().replace(/token=[^&]*/,'').replace(/^[&?]+|[&?]+$/g,''):'');
     history.replaceState(null,'',clean);
     login();
+  }else{
+    const saved=localStorage.getItem("billingToken");
+    if(saved){ document.getElementById("token-input").value=saved; login(); }
   }
 })();
 </script>

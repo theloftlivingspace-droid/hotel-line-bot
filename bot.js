@@ -649,6 +649,7 @@ async function handleImageMessage(event) {
     const payments = await loadPayments(); payments.unshift(payment); await savePayments(payments.slice(0, 200));
 
     console.log(`[Slip] ห้อง ${roomList} - รับสลิปแล้ว id=${paymentId}`);
+    notifyNewSlip(payment).catch((e) => console.error("[slip-push] notify error:", e.message));
   } catch (e) {
     console.error("[Slip Error]", e.message);
     await linePush(userId, [{ type: "text", text: "เกิดข้อผิดพลาด กรุณาลองใหม่หรือติดต่อเจ้าหน้าที่ค่ะ" }]);
@@ -1366,6 +1367,8 @@ console.log("Email Sync พร้อมทำงาน (ทุก 30 นาท�
 
 const { registerPushRoutes, runBadgeCheck } = require("./push-badge");
 registerPushRoutes(app);
+const { registerSlipPushRoutes, notifyNewSlip } = require("./slip-push");
+registerSlipPushRoutes(app, adminAuth);
 console.log("Push badge (booking/invoice/stock) พร้อมทำงาน (ทุก 5 นาที)");
 console.log("GOOGLE_SHEET_ID:", process.env.GOOGLE_SHEET_ID || "(ไม่พบ)");
 console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่พบ)");
