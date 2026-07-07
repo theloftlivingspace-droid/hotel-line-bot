@@ -164,6 +164,15 @@ async function runBadgeCheck() {
 
 // ─── Express routes ─────────────────────────────────────────────────────────
 function registerPushRoutes(app) {
+  // the-loft-admin (Vercel) calls these routes cross-origin — allow it.
+  app.use("/push", (req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  });
+
   app.get("/push/vapid-public-key", (_req, res) => {
     res.json({ publicKey: VAPID_PUBLIC_KEY });
   });
