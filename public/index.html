@@ -732,8 +732,8 @@ async function loadPayments(){
             ${p.bankName||p.date ? `<div style="font-size:11px;color:#94a3b8;line-height:1.7">${p.bankName?`ธนาคาร: ${p.bankName}<br>`:""}${p.date?`วันที่: ${p.date}`:""}</div>` : ""}
             <!-- ปุ่ม action -->
             <div style="display:flex;gap:6px;margin-top:10px">
-              <button class="btn btn-success btn-sm" onclick="updatePayment('${p.id}','confirmed','')">✓ ยืนยัน</button>
-              <button class="btn btn-danger btn-sm" onclick="rejectPayment('${p.id}')">✗ ปฏิเสธ</button>
+              <button class="btn btn-success btn-sm" onclick="updatePayment('${p.id}','confirmed','',this)">✓ ยืนยัน</button>
+              <button class="btn btn-danger btn-sm" onclick="rejectPayment('${p.id}',this)">✗ ปฏิเสธ</button>
               <button class="btn btn-sm" style="background:transparent;color:#94a3b8;border:1px solid #e2e8f0" onclick="deleteOnePayment('${p.id}','${p.roomNumber}')">🗑</button>
             </div>
           </div>
@@ -767,8 +767,33 @@ async function deleteOldPayments(){
     loadPayments();loadRooms();
   }catch(e){alert("เกิดข้อผิดพลาด: "+e.message);}
 }
-async function updatePayment(id,status,note){await api(`/api/payments/${id}`,{method:"PATCH",body:JSON.stringify({status,note})});loadPayments();}
-async function rejectPayment(id){const note=prompt("ระบุเหตุผลที่ปฏิเสธ:");if(note===null)return;await updatePayment(id,"rejected",note);}
+function disableActionButtons(btn){
+  if(!btn)return;
+  const row=btn.parentElement;
+  if(!row)return;
+  row.querySelectorAll("button").forEach(b=>{
+    b.disabled=true;
+    b.style.opacity="0.5";
+    b.style.background="#cbd5e1";
+    b.style.borderColor="#cbd5e1";
+    b.style.color="#64748b";
+    b.style.cursor="not-allowed";
+    b.style.pointerEvents="none";
+  });
+}
+async function updatePayment(id,status,note,btn){
+  disableActionButtons(btn);
+  try{
+    await api(`/api/payments/${id}`,{method:"PATCH",body:JSON.stringify({status,note})});
+  }finally{
+    loadPayments();
+  }
+}
+async function rejectPayment(id,btn){
+  const note=prompt("ระบุเหตุผลที่ปฏิเสธ:");
+  if(note===null)return;
+  await updatePayment(id,"rejected",note,btn);
+}
 
 async function loadMoveouts(){
   const el=document.getElementById("moveout-list");
