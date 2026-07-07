@@ -1280,6 +1280,23 @@ app.post("/api/cancel-notify", adminAuth, async (req, res) => {
   }
 });
 
+app.post("/api/checkout-notify", adminAuth, async (req, res) => {
+  const { room, guest, checkin, checkout } = req.body;
+  if (!room || !guest) return res.status(400).json({ ok: false, error: "room and guest required" });
+  const msg = [
+    "🧳 Checkout ก่อนกำหนด",
+    `🏠 ห้อง ${room}`,
+    `👤 ${guest}`,
+    `📅 ${checkin} → ${checkout}`,
+  ].join("\n");
+  try {
+    await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
 app.post("/api/broadcast", adminAuth, async (req, res) => {
   const { message } = req.body; if (!message) return res.status(400).json({ error: "message required" });
   const targets = Object.values(await loadRooms()).filter(r => r.lineUserId);
