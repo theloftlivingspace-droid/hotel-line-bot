@@ -30,13 +30,13 @@ self.addEventListener("push", (event) => {
 
   event.waitUntil(
     (async () => {
-      await self.registration.showNotification(title, options);
-      if (typeof data.count === "number" && self.registration.setAppBadge) {
-        try {
-          if (data.count > 0) await self.registration.setAppBadge(data.count);
-          else await self.registration.clearAppBadge();
-        } catch { /* setAppBadge unsupported, ignore */ }
+      const tasks = [self.registration.showNotification(title, options)];
+      if (typeof data.count === "number" && "setAppBadge" in self.navigator) {
+        tasks.push(
+          data.count > 0 ? self.navigator.setAppBadge(data.count) : self.navigator.clearAppBadge()
+        );
       }
+      await Promise.all(tasks);
     })()
   );
 });
