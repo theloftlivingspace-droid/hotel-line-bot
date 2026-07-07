@@ -59,6 +59,16 @@ async function saveSubscriptions(subs) {
   await redisSet(SUBS_KEY, subs);
 }
 
+async function getPendingCount() {
+  try {
+    const payments = (await redisGet("payments")) || [];
+    return payments.filter((p) => p.status === "pending_review").length;
+  } catch (e) {
+    console.error("[slip-push] getPendingCount error:", e.message);
+    return 0;
+  }
+}
+
 // ─── Push sending ──────────────────────────────────────────────────────────
 async function sendToAll(payload) {
   if (!vapidReady) return;
@@ -107,14 +117,16 @@ async function notifyNewSlip(payment) {
     amount || null,
   ].filter(Boolean).join(" · ");
 
+  const count = await getPendingCount();
+
   await sendToAll({
     title: "💰 สลิปใหม่เข้า",
     body,
     tag: `slip-${payment.id}`,
     url: "/", // Billing Console root; tenant will land on Payments tab (already default)
-    count: null,
+    count,
   });
-  console.log(`[slip-push] pushed new slip id=${payment.id} room=${payment.roomNumber}`);
+  console.log(`[slip-push] pushed new slip id=${payment.id} room=${payment.roomNumber} pendingCount=${count}`);
 }
 
 // ─── Express routes ─────────────────────────────────────────────────────────
@@ -143,7 +155,8 @@ function registerSlipPushRoutes(app, adminAuth) {
     await saveSubscriptions(filtered);
 
     if (vapidReady) {
-      await sendToOne(sub, { title: "🔔 เปิดแจ้งเตือนแล้ว", body: "จะแจ้งเตือนทันทีเมื่อมีสลิปใหม่เข้ามา", tag: "billing-push-enabled", url: "/" });
+      const count = await getPendingCount();
+      await sendToOne(sub, { title: "🔔 เปิดแจ้งเตือนแล้ว", body: "จะแจ้งเตือนทันทีเมื่อมีสลิปใหม่เข้ามา", tag: "billing-push-enabled", url: "/", count });
     }
     res.json({ ok: true });
   });

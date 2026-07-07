@@ -722,6 +722,7 @@ async function loadPayments(){
     const pending=payments.filter(p=>p.status==="pending_review");
     const badge=document.getElementById("badge-payments");
     if(pending.length){badge.textContent=pending.length;badge.classList.remove("hidden");}else badge.classList.add("hidden");
+    if(navigator.setAppBadge){ pending.length?navigator.setAppBadge(pending.length).catch(()=>{}):navigator.clearAppBadge().catch(()=>{}); }
     if(!payments.length){el.innerHTML='<div class="empty">ยังไม่มีสลิปที่ส่งมาค่ะ</div>';return;}
     el.innerHTML=payments.map(p=>`
       <div style="padding:16px;border-bottom:1px solid #f1f5f9">
