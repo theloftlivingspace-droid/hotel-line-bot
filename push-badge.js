@@ -22,8 +22,12 @@ const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
 let vapidReady = false;
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-  vapidReady = true;
+  try {
+    webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+    vapidReady = true;
+  } catch (e) {
+    console.error("[push-badge] Invalid VAPID config, push disabled (bot continues normally):", e.message);
+  }
 } else {
   console.warn("[push-badge] VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY not set — push disabled.");
 }
@@ -95,6 +99,19 @@ async function getLowStockCount() {
   }
 }
 
+async function computeCurrentBadge() {
+  const [{ bookingCount, invoiceCount }, lowStockCount] = await Promise.all([
+    getBookingInvoiceCounts(),
+    getLowStockCount(),
+  ]);
+  const total = bookingCount + invoiceCount + lowStockCount;
+  const parts = [];
+  if (bookingCount) parts.push(`${bookingCount} booking`);
+  if (invoiceCount) parts.push(`${invoiceCount} invoice`);
+  if (lowStockCount) parts.push(`${lowStockCount} stock out`);
+  return { total, bookingCount, invoiceCount, lowStockCount, body: parts.length ? parts.join(" · ") : "ไม่มีรายการค้าง" };
+}
+
 // ─── Push sending ──────────────────────────────────────────────────────────
 async function sendToAll(payload) {
   const subs = await getSubscriptions();
@@ -119,31 +136,30 @@ async function sendToAll(payload) {
   if (alive.length !== subs.length) await saveSubscriptions(alive);
 }
 
+async function sendToOne(sub, payload) {
+  try {
+    await webpush.sendNotification(
+      { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+      JSON.stringify(payload)
+    );
+    return true;
+  } catch (err) {
+    console.error("[push-badge] sendToOne error:", err.statusCode, err.message);
+    return false;
+  }
+}
+
 // ─── Main check, called by cron ────────────────────────────────────────────
 async function runBadgeCheck() {
   if (!vapidReady) return;
-  const [{ bookingCount, invoiceCount }, lowStockCount] = await Promise.all([
-    getBookingInvoiceCounts(),
-    getLowStockCount(),
-  ]);
-  const total = bookingCount + invoiceCount + lowStockCount;
+  const { total, body } = await computeCurrentBadge();
   const lastCount = await redisGet(LAST_COUNT_KEY);
 
   if (lastCount !== null && lastCount === total) return; // no change, skip push
 
   await redisSet(LAST_COUNT_KEY, total);
-
-  const parts = [];
-  if (bookingCount) parts.push(`${bookingCount} booking`);
-  if (invoiceCount) parts.push(`${invoiceCount} invoice`);
-  if (lowStockCount) parts.push(`${lowStockCount} stock out`);
-
-  await sendToAll({
-    count: total,
-    title: "Loft Admin",
-    body: parts.length ? parts.join(" · ") : "ไม่มีรายการค้าง",
-  });
-  console.log(`[push-badge] pushed total=${total} (${parts.join(", ") || "none"})`);
+  await sendToAll({ count: total, title: "Loft Admin", body });
+  console.log(`[push-badge] pushed total=${total} (${body})`);
 }
 
 // ─── Express routes ─────────────────────────────────────────────────────────
@@ -159,8 +175,17 @@ function registerPushRoutes(app) {
     }
     const subs = await getSubscriptions();
     const filtered = subs.filter((s) => s.endpoint !== endpoint);
-    filtered.push({ endpoint, p256dh: keys.p256dh, auth: keys.auth });
+    const sub = { endpoint, p256dh: keys.p256dh, auth: keys.auth };
+    filtered.push(sub);
     await saveSubscriptions(filtered);
+
+    // Immediately sync this device's badge instead of waiting for the next
+    // 5-min cron / next count change (fixes: new subscriber missing pushes
+    // that happened before it subscribed).
+    if (vapidReady) {
+      const { total, body } = await computeCurrentBadge();
+      await sendToOne(sub, { count: total, title: "Loft Admin", body });
+    }
     res.json({ ok: true });
   });
 
@@ -171,10 +196,26 @@ function registerPushRoutes(app) {
     res.json({ ok: true });
   });
 
-  // Manual trigger for testing
-  app.post("/push/badge-check-now", async (_req, res) => {
+  // Manual trigger for testing. ?force=1 bypasses the "no change" skip.
+  app.post("/push/badge-check-now", async (req, res) => {
+    if (req.query.force === "1") {
+      await redisSet(LAST_COUNT_KEY, null);
+    }
     await runBadgeCheck();
     res.json({ ok: true });
+  });
+
+  // Diagnostics: is VAPID configured, how many devices subscribed, last count sent.
+  app.get("/push/status", async (_req, res) => {
+    const subs = await getSubscriptions();
+    const lastCount = await redisGet(LAST_COUNT_KEY);
+    const current = vapidReady ? await computeCurrentBadge() : null;
+    res.json({
+      vapidReady,
+      subscriberCount: subs.length,
+      lastCountSent: lastCount,
+      currentBadge: current,
+    });
   });
 }
 
