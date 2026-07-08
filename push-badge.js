@@ -158,8 +158,8 @@ async function runBadgeCheck() {
   if (lastCount !== null && lastCount === total) return; // no change, skip push
 
   await redisSet(LAST_COUNT_KEY, total);
-  await sendToAll({ count: total, title: "Loft Admin", body });
-  console.log(`[push-badge] pushed total=${total} (${body})`);
+  await sendToAll({ count: total, title: "Loft Admin", body, silent: total === 0 });
+  console.log(`[push-badge] pushed total=${total} (${body})${total === 0 ? " [silent]" : ""}`);
 }
 
 // ─── Express routes ─────────────────────────────────────────────────────────
@@ -193,7 +193,7 @@ function registerPushRoutes(app) {
     // that happened before it subscribed).
     if (vapidReady) {
       const { total, body } = await computeCurrentBadge();
-      await sendToOne(sub, { count: total, title: "Loft Admin", body });
+      await sendToOne(sub, { count: total, title: "Loft Admin", body, silent: total === 0 });
     }
     res.json({ ok: true });
   });
