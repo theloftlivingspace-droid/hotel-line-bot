@@ -1331,6 +1331,14 @@ app.post("/api/set-richmenu-all", adminAuth, async (req, res) => {
   for (const room of targets) { try { await fetch(`https://api.line.me/v2/bot/user/${room.lineUserId}/richmenu/${richMenuId}`, { method: "POST", headers: { Authorization: `Bearer ${LINE_TOKEN}` } }); ok++; } catch { fail++; } await new Promise(r => setTimeout(r, 100)); }
   res.json({ ok, fail, total: targets.length, richMenuId });
 });
+app.post("/api/test-hotel-job", adminAuth, async (req, res) => {
+  try {
+    await runHotelJob();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 app.post("/api/test-reminder", adminAuth, async (req, res) => {
   const day = Number(req.body.day) || new Date().getDate(), roomNumber = req.body.roomNumber || null;
   try { await runRentReminder(day, roomNumber, true); res.json({ ok: true, day, roomNumber }); }
@@ -1380,7 +1388,12 @@ startWebhookServer();
 cron.schedule("*/5 * * * *", () => runBadgeCheck().catch((e) => console.error("[push-badge] cron error:", e.message)));
 
 // Hotel cron 19:00
-cron.schedule(CRON_SCHED, runHotelJob, { timezone: "Asia/Bangkok" });
+try {
+  cron.schedule(CRON_SCHED, runHotelJob, { timezone: "Asia/Bangkok" });
+  console.log(`[CRON] hotel job registered: "${CRON_SCHED}"`);
+} catch (e) {
+  console.error(`[CRON] FAILED to register hotel job: ${e.message}`);
+}
 // Rent reminder: วันที่ 5 และ 8-15 เวลา 7:00 น.
 cron.schedule("0 7 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });
 // ต้นเดือน 09:00 → เช็ค Redis flag ถ้าใช้ OA สำรองอยู่ แจ้ง admin ให้กลับ OA หลัก
