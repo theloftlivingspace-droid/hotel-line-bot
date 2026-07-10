@@ -1266,6 +1266,24 @@ app.post("/api/send-maid-note", adminAuth, async (req, res) => {
   }
 });
 
+// ส่งข้อความ 1:1 ตรงเข้าหา ADMIN_USER (Nathan) โดยเฉพาะ — ใช้กับ alert ที่เป็นเรื่อง
+// technical/ระบบ (เช่น Apartmentery session หมดอายุ, hotel-job failure,
+// automation errors) ซึ่งไม่ใช่งานของแม่บ้าน จึงไม่ควรเข้ากลุ่มแม่บ้านเหมือน
+// send-maid-note. ใช้ linePush() (ไม่ใช่ linePushWithToken กับ token ตายตัว)
+// เพื่อให้ auto-switch ไป LINE_TOKEN_BACKUP เองถ้าระบบสลับไปใช้ OA สำรองอยู่
+// (ดู use_backup_oa ใน Redis) — ไม่ต้องแก้อะไรเพิ่มตอนสลับ OA สำรอง
+app.post("/api/send-admin-alert", adminAuth, async (req, res) => {
+  const { note } = req.body;
+  if (!note) return res.status(400).json({ ok: false, error: "note required" });
+  if (!ADMIN_USER) return res.status(500).json({ ok: false, error: "ADMIN_USER_ID not configured" });
+  try {
+    await linePush(ADMIN_USER, [{ type: "text", text: note }]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
 app.post("/api/cancel-notify", adminAuth, async (req, res) => {
   const { room, guest, checkin, checkout } = req.body;
   if (!room || !guest) return res.status(400).json({ ok: false, error: "room and guest required" });
