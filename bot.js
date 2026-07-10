@@ -369,6 +369,8 @@ async function runHotelJob() {
     const msg = buildHotelMessage(checkIns, checkOuts, tomorrow);
     await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
     console.log("ส่ง LINE สำเร็จ");
+    const todayStr = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" }); // YYYY-MM-DD
+    await redisSet("hotel_job_last_run", todayStr);
   } catch (err) {
     console.error("Hotel job error: " + err.message);
     try { await linePush(LINE_GROUP, [{ type: "text", text: "⚠️ ระบบแจ้งเตือนแม่บ้านขัดข้อง\n" + err.message }]); } catch (_) {}
@@ -1335,6 +1337,17 @@ app.post("/api/test-hotel-job", adminAuth, async (req, res) => {
   try {
     await runHotelJob();
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// เช็คว่า runHotelJob() (สรุปเช็คอิน/เอาท์ 19:00) รันสำเร็จวันนี้ไปหรือยัง
+// ใช้โดย GAS backstop trigger (triggerHotelJob19) — ถ้ารันไปแล้วจะได้ไม่ยิงซ้ำ
+app.get("/api/hotel-job-status", adminAuth, async (req, res) => {
+  try {
+    const lastRun = await redisGet("hotel_job_last_run");
+    const todayStr = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" });
+    res.json({ ok: true, ranToday: lastRun === todayStr, lastRun: lastRun || null, today: todayStr });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
