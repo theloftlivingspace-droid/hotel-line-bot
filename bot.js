@@ -373,7 +373,7 @@ async function runHotelJob() {
     await redisSet("hotel_job_last_run", todayStr);
   } catch (err) {
     console.error("Hotel job error: " + err.message);
-    try { await linePush(LINE_GROUP, [{ type: "text", text: "⚠️ ระบบแจ้งเตือนแม่บ้านขัดข้อง\n" + err.message }]); } catch (_) {}
+    try { await linePush(ADMIN_USER || LINE_GROUP, [{ type: "text", text: "⚠️ ระบบแจ้งสรุปแม่บ้าน 19:00 ขัดข้อง (ไม่ใช่งานแม่บ้าน — เป็นปัญหาทางเทคนิค)\n" + err.message }]); } catch (_) {}
   }
 }
 
