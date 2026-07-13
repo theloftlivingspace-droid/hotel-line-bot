@@ -216,6 +216,16 @@ function registerPushRoutes(app) {
     res.json({ ok: true });
   });
 
+  // Same as above but GET, so it can be triggered by tapping a link on mobile
+  // (no curl/terminal needed) — read-only side effect (just a push), safe as GET.
+  app.get("/push/badge-check-now", async (req, res) => {
+    if (req.query.force === "1") {
+      await redisSet(LAST_COUNT_KEY, null);
+    }
+    await runBadgeCheck();
+    res.json({ ok: true });
+  });
+
   // Client (sw.js) reports what happened when it tried to set the app badge.
   // Lets us see setAppBadge failures on iOS without needing Safari Web Inspector.
   app.post("/push/debug-log", async (req, res) => {
