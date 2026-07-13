@@ -57,6 +57,8 @@ async function redisSet(key, value) {
 
 const SUBS_KEY = "push_subscriptions";
 const LAST_COUNT_KEY = "push_badge_last_count";
+const DEBUG_LOG_KEY = "push_badge_debug_log";
+const DEBUG_LOG_MAX = 30;
 
 async function getSubscriptions() {
   return (await redisGet(SUBS_KEY)) || [];
@@ -212,6 +214,30 @@ function registerPushRoutes(app) {
     }
     await runBadgeCheck();
     res.json({ ok: true });
+  });
+
+  // Client (sw.js) reports what happened when it tried to set the app badge.
+  // Lets us see setAppBadge failures on iOS without needing Safari Web Inspector.
+  app.post("/push/debug-log", async (req, res) => {
+    const { event, count, badgeApiAvailable, error, userAgent, standalone } = req.body || {};
+    const entry = {
+      ts: new Date().toISOString(),
+      event: event || "unknown",
+      count: typeof count === "number" ? count : null,
+      badgeApiAvailable: !!badgeApiAvailable,
+      standalone: standalone === undefined ? null : !!standalone,
+      error: error || null,
+      userAgent: userAgent || null,
+    };
+    const log = (await redisGet(DEBUG_LOG_KEY)) || [];
+    log.unshift(entry);
+    await redisSet(DEBUG_LOG_KEY, log.slice(0, DEBUG_LOG_MAX));
+    res.json({ ok: true });
+  });
+
+  app.get("/push/debug-log", async (_req, res) => {
+    const log = (await redisGet(DEBUG_LOG_KEY)) || [];
+    res.json({ log });
   });
 
   // Diagnostics: is VAPID configured, how many devices subscribed, last count sent.
