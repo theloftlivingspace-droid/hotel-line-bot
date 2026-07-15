@@ -532,10 +532,66 @@ function normalizeChannel(rawChannel, subject, body) {
   return (rawChannel || "Other").trim().split(/\s+/)[0];
 }
 
+// LH ส่งอีเมลจองใหม่บาง booking (พบกับ Expedia/EPS) เป็น template ตารางละเอียด
+// แทนที่จะเป็นประโยคเดียว "booked the...for...to...on..." — subject ก็ไม่มีคำว่า
+// "New Reservation" ด้วย เช่น "Expedia Booking for # 2506573631 for Antov, Pranee, Arriving 18-Jul-2026"
+function parseExpediaDetailEmail(email) {
+  const subject = email.subject || "";
+  if (!/Booking for #\s*\d+/i.test(subject)) return null;
+
+  const rawHtml = email.html || "";
+  const body = extractText(email);
+  if (!body) return null;
+
+  // ต้องเป็น banner "New Reservation" เท่านั้น — กันไม่ให้หลุดมาจากอีเมล modify/cancel
+  // ที่อาจใช้ subject ใกล้เคียงกันในอนาคต
+  if (!/New\s+Reservation/i.test(body)) return null;
+
+  const guestMatch = body.match(/Guest:\s*([^\n]+?)\s*Age:/i);
+  const inMatch  = body.match(/Check-in:\s*(\d{1,2}-[A-Za-z]{3}-\d{4})/i);
+  const outMatch = body.match(/Check-out:\s*(\d{1,2}-[A-Za-z]{3}-\d{4})/i);
+  const roomMatch = rawHtml.match(/ROOM\s*-\s*Loft\s*-\s*([^<]+?)\s*-\s*\d+\/\d+/i)
+                 || body.match(/ROOM\s*-\s*Loft\s*-\s*(.+?)\s*-\s*\d+\/\d+/i);
+
+  if (!guestMatch || !inMatch || !outMatch) {
+    console.log("parseExpediaDetail FAIL: guest=" + !!guestMatch + " in=" + !!inMatch + " out=" + !!outMatch);
+    return null;
+  }
+
+  const guest    = guestMatch[1].trim();
+  const checkIn  = isoDate(inMatch[1].replace(/-/g, " "));
+  const checkOut = isoDate(outMatch[1].replace(/-/g, " "));
+  const roomName = roomMatch ? roomMatch[1].trim() : "";
+  const channel  = normalizeChannel("", subject, body); // subject มีคำว่า "Expedia" อยู่แล้ว
+
+  if (!checkIn || !checkOut) {
+    console.log("parseExpediaDetail FAIL (date): in=" + checkIn + " out=" + checkOut);
+    return null;
+  }
+
+  const guestKey = guest.toLowerCase().replace(/[^a-z]/g, "").substring(0, 10) || Buffer.from(guest).toString("hex").substring(0, 10);
+  const prefix   = /expedia/i.test(channel) ? "EXP" : "OTH";
+  const emailDateStr = email.date
+    ? new Date(email.date).toISOString().slice(0, 10).replace(/-/g, "")
+    : new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  // LH ส่งอีเมล 2 แบบ (summary sentence + detail table) สำหรับ booking เดียวกัน ห่างกันไม่กี่วินาที
+  // ใช้สูตร resId เดียวกับ parseEmail() ทั่วไป (prefix+guestKey+emailDate) เพื่อให้ resId ตรงกัน
+  // แล้ว dedupe กันเองผ่าน notifiedIds.has() ใน syncEmails() — ไม่ใช้ Booking Confirmation Id
+  // เพราะจะได้ resId คนละอันกับอีเมล summary แล้วเข้า Sheet1 ซ้ำ 2 แถว
+  const resId = prefix + "-" + guestKey + "-" + emailDateStr;
+
+  console.log("✅ parseExpediaDetail OK: " + resId + " | " + guest + " | " + channel + " | " + checkIn + " -> " + checkOut);
+  return { resId, guest, roomName, checkIn, checkOut, channel, isAirbnb: false, note: "มัดจำ 3,000 บาท" };
+}
+
 function parseEmail(email) {
   // ── ลอง Airbnb direct parser ก่อน (363 Mycondo) ────────────────────────
   const airbnbDirect = parseAirbnbDirectEmail(email);
   if (airbnbDirect) return airbnbDirect;
+
+  // ── ลอง Expedia/EPS detail-table template ──────────────────────────────
+  const expediaDetail = parseExpediaDetailEmail(email);
+  if (expediaDetail) return expediaDetail;
 
   const body = extractText(email);
   const subject = email.subject || "";
@@ -750,15 +806,16 @@ function fetchEmails(since) {
         );
 
         try {
-          const [uidsEn, uidsTh, uidsAbb] = await Promise.all([
+          const [uidsEn, uidsTh, uidsAbb, uidsDetail] = await Promise.all([
             search([...baseLH,  ["SUBJECT", "New Reservation"]]),
             search([...baseLH,  ["SUBJECT", "การจองใหม่"]]),
             search([...baseABB, ["SUBJECT", "Reservation confirmed"]]),
+            search([...baseLH,  ["SUBJECT", "Booking for #"]]), // Expedia/EPS detail-table template
           ]);
 
           // merge + deduplicate uid lists
-          const allUids = [...new Set([...uidsEn, ...uidsTh, ...uidsAbb])];
-          console.log(`พบอีเมล: LH-EN=${uidsEn.length} LH-TH=${uidsTh.length} ABB363=${uidsAbb.length} รวม=${allUids.length} ฉบับ`);
+          const allUids = [...new Set([...uidsEn, ...uidsTh, ...uidsAbb, ...uidsDetail])];
+          console.log(`พบอีเมล: LH-EN=${uidsEn.length} LH-TH=${uidsTh.length} ABB363=${uidsAbb.length} Detail=${uidsDetail.length} รวม=${allUids.length} ฉบับ`);
 
           if (allUids.length === 0) { console.log("ไม่พบอีเมลใหม่"); imap.end(); return resolve([]); }
 
