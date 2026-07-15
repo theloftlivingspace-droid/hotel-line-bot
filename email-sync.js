@@ -224,6 +224,26 @@ async function redisGet(key) {
   } catch { return null; }
 }
 
+async function redisSet(key, value) {
+  if (!REDIS_URL) return false;
+  try {
+    const res = await axios.get(`${REDIS_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(JSON.stringify(value))}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+    });
+    return res.data.result === "OK";
+  } catch (e) { console.error("Redis SET error:", e.message); return false; }
+}
+
+async function redisDel(key) {
+  if (!REDIS_URL) return false;
+  try {
+    const res = await axios.get(`${REDIS_URL}/del/${encodeURIComponent(key)}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+    });
+    return res.data.result >= 1;
+  } catch (e) { console.error("Redis DEL error:", e.message); return false; }
+}
+
 async function linePushWithToken(to, text, token) {
   const res = await axios.post(
     "https://api.line.me/v2/bot/message/push",
@@ -304,6 +324,12 @@ async function sendNewBookingToAdmin(res, roomLabel, status = null) {
     hintLine;
   await linePush(ADMIN_ID, msg);
   console.log("แจ้ง admin: " + res.resId + (roomLabel ? " [auto=" + roomLabel + "]" : status === "conflict" ? " [CONFLICT]" : ""));
+
+  // ถ้าข้อความนี้รอให้แอดมินตอบเลขห้อง → จำ resId ของ booking นี้ไว้ใน Redis
+  // เพื่อให้ handleLineReply ผูกคำตอบกับ booking ที่ถามจริง แทนการเดาแถวล่างสุดในชีต
+  if (!roomLabel) {
+    await redisSet("pending_room_resid", res.resId);
+  }
 }
 
 async function sendConfirmToAdmin(resId, roomNumber, guest) {
@@ -570,7 +596,13 @@ function parseExpediaDetailEmail(email) {
   }
 
   const guestKey = guest.toLowerCase().replace(/[^a-z]/g, "").substring(0, 10) || Buffer.from(guest).toString("hex").substring(0, 10);
-  const prefix   = /expedia/i.test(channel) ? "EXP" : "OTH";
+  // ใช้ prefix table เดียวกับ parseEmail() ทั่วไป ไม่ hardcode แค่ EXP/OTH
+  // เพราะ template ตารางละเอียดนี้เจอกับ Booking.com/Trip บางฉบับด้วย ไม่ใช่แค่ Expedia
+  const prefix   = /airbnb/i.test(channel)  ? "ABB" :
+                    /direct/i.test(channel)  ? "DBK" :
+                    /booking/i.test(channel) ? "BKC" :
+                    /expedia/i.test(channel) ? "EXP" :
+                    /trip/i.test(channel)    ? "TRP" : "OTH";
   const emailDateStr = email.date
     ? new Date(email.date).toISOString().slice(0, 10).replace(/-/g, "")
     : new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -724,11 +756,27 @@ async function handleLineReply(messageText, sourceId) {
     range: SHEET_NAME + "!A:F",
   });
   const rows = result.data.values || [];
+
+  // ผูกคำตอบกับ booking ที่ bot เพิ่งถามจริง (เก็บไว้ใน Redis ตอนส่งข้อความ)
+  // แทนการเดาแถว "รอยืนยัน" ล่างสุดในชีต ซึ่งผิดได้ถ้ามีหลายแถวค้างพร้อมกัน
   let resId = "";
-  for (let i = rows.length - 1; i >= 1; i--) {
-    if ((rows[i][0] || "").trim() === "รอยืนยัน") {
-      resId = (rows[i][5] || "").trim();
-      break;
+  const pendingResId = await redisGet("pending_room_resid");
+  if (pendingResId) {
+    const stillPending = rows.some(
+      (r, i) => i >= 1 && (r[5] || "").trim() === pendingResId && (r[0] || "").trim() === "รอยืนยัน"
+    );
+    if (stillPending) {
+      resId = pendingResId;
+    } else {
+      console.log("pending_room_resid (" + pendingResId + ") ไม่ตรงกับแถวรอยืนยันในชีตแล้ว — fallback ไปหาแถวล่างสุด");
+    }
+  }
+  if (!resId) {
+    for (let i = rows.length - 1; i >= 1; i--) {
+      if ((rows[i][0] || "").trim() === "รอยืนยัน") {
+        resId = (rows[i][5] || "").trim();
+        break;
+      }
     }
   }
   if (!resId) { console.log("ไม่มีการจองที่รอยืนยัน"); return; }
@@ -737,6 +785,8 @@ async function handleLineReply(messageText, sourceId) {
   try {
     const info = await updateRoomInSheet(sheets, resId, roomNumber);
     if (!info) { console.log("ไม่เจอ resId: " + resId); return; }
+
+    if (resId === pendingResId) await redisDel("pending_room_resid");
 
     await sendConfirmToAdmin(resId, roomNumber, info.guest);
 
