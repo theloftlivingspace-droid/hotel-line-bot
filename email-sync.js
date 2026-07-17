@@ -905,7 +905,19 @@ async function syncEmails() {
     for (const email of emails) {
       const res = parseEmail(email);
       if (!res) continue;
-      if (notifiedIds.has(res.resId)) { console.log("แจ้งไปแล้ว: " + res.resId); continue; }
+      if (notifiedIds.has(res.resId)) {
+        // resId ชนกัน (เช่น แขกยกเลิกแล้วจองใหม่ในวันเดียวกัน guest+emailDate เดิม
+        // ทำให้สูตร resId ได้ค่าเดิม) — เช็คว่าเป็น booking เดียวกันจริงหรือคนละอันที่ชนกัน
+        // โดยเทียบ checkIn/checkOut กับที่เคย log ไว้ก่อนหน้า
+        const priorRows = dataRows.filter((r) => r[0] === res.resId);
+        const exactDup = priorRows.some((r) => r[3] === res.checkIn && r[4] === res.checkOut);
+        if (exactDup) { console.log("แจ้งไปแล้ว: " + res.resId); continue; }
+        // คนละช่วงวันที่ -> เป็น booking ใหม่จริง แค่ resId ชนกัน ใส่ suffix กันซ้ำ
+        const newResId = res.resId + "-R" + res.checkIn.replace(/-/g, "");
+        console.log("resId ชนกัน (" + res.resId + ") แต่วันที่ต่างกัน -> ใช้ resId ใหม่: " + newResId);
+        res.resId = newResId;
+        if (notifiedIds.has(res.resId)) { console.log("แจ้งไปแล้ว: " + res.resId); continue; }
+      }
 
       // วันจอง = วันที่ LH ส่ง New Reservation email (= วันที่แขกจองจริง)
       const emailBookingDate = email.date
