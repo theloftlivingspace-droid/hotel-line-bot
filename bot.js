@@ -1284,9 +1284,28 @@ app.post("/api/send-admin-alert", adminAuth, async (req, res) => {
   }
 });
 
+// ห้องนี้เคยถูกประกาศเข้ากลุ่มแม่บ้านไปแล้วหรือยัง (ตามกติกาเดียวกับ email-sync.js:
+// เช็คอินวันนี้ = ประกาศทันที, เช็คอินพรุ่งนี้+หลัง19:00 = ประกาศทันที,
+// เช็คอินพรุ่งนี้+ก่อน19:00 หรือไกลกว่านั้น = ยังไม่ประกาศ รอ cron 19:00)
+function wasCheckinAlreadyAnnounced(checkin) {
+  if (!checkin) return true; // ไม่รู้วันที่ ให้ปลอดภัยไว้ก่อน แจ้งไปเลย
+  const todayBKK    = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" })).toISOString().slice(0, 10);
+  const tomorrowD   = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+  tomorrowD.setDate(tomorrowD.getDate() + 1);
+  const tomorrowBKK = tomorrowD.toISOString().slice(0, 10);
+  const hourBKK     = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" })).getHours();
+  if (checkin <= todayBKK) return true;                          // เช็คอินวันนี้หรือผ่านมาแล้ว
+  if (checkin === tomorrowBKK && hourBKK >= 19) return true;      // พรุ่งนี้ + หลัง 19:00 (ประกาศทันทีไปแล้ว)
+  return false;                                                    // ยังไม่ถึงรอบประกาศ
+}
+
 app.post("/api/cancel-notify", adminAuth, async (req, res) => {
   const { room, guest, checkin, checkout } = req.body;
   if (!room || !guest) return res.status(400).json({ ok: false, error: "room and guest required" });
+  if (!wasCheckinAlreadyAnnounced(checkin)) {
+    // ยังไม่เคยแจ้งกลุ่มแม่บ้านมาก่อน (ยกเลิกก่อนถึงรอบประกาศ 19:00) — ไม่ต้องแจ้ง
+    return res.json({ ok: true, skipped: true, reason: "not yet announced to maid group" });
+  }
   const msg = [
     "🚫 ยกเลิกการจอง",
     `🏠 ห้อง ${room}`,
