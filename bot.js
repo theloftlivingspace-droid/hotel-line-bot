@@ -378,6 +378,23 @@ async function runHotelJob() {
 }
 
 // ─── Hotel: reply เลขห้องจากกลุ่ม ──────────────────────────────
+const GAS_STYLE_URL = "https://script.google.com/macros/s/AKfycbyAP9Z_pIlKrXv9AOXwDhY0wNVSSFL0vU8VuH0SssFyxretRyt9CJNjxVZOLN3eFjs/exec";
+// bot.js เขียนลง Sheet1 ตรงๆ ผ่าน Sheets API (ไม่ผ่าน GAS webapp เลย) —
+// เพราะงั้นต้องยิง styleSheet1 เองหลังเขียนทุกครั้ง เหมือนที่ email-sync.js ทำ
+// ไม่งั้นแถวที่ handleAdminReply ใส่เลขห้องจะไม่ถูก sort/format ตาม
+async function triggerStyleSheet1() {
+  try {
+    await fetch(GAS_STYLE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "styleSheet1" }),
+      redirect: "follow",
+    });
+    console.log("styleSheet1: triggered OK");
+  } catch (e) {
+    console.error("styleSheet1: trigger failed:", e.message);
+  }
+}
 async function updateRoomInSheet(sheets, resId, roomNumber) {
   const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:G" });
   const rows = result.data.values || [];
@@ -387,6 +404,7 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
         spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A" + (i + 1),
         valueInputOption: "RAW", requestBody: { values: [[roomNumber]] },
       });
+      await triggerStyleSheet1();
       return { guest: rows[i][1] || resId, row: rows[i] };
     }
   }
