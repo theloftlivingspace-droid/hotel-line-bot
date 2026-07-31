@@ -41,6 +41,19 @@ const ROOM_TYPE_MAP = {
 
 // ห้องที่ไม่ต้องส่งกลุ่มแม่บ้าน
 const NO_MAID_ROOMS = new Set(["363"]);
+
+// ห้องที่ปิดชั่วคราว (เช่น ปิดปรับปรุง) — ระบบ auto-assign จะไม่เลือกห้องนี้
+// ถ้า booking มีวันเข้าพัก/ออก คาบเกี่ยวกับช่วงที่ปิดไว้
+const BLOCKED_ROOMS = [
+  { room: "103", from: "2026-07-31", to: "2026-08-30" }, // ปิดปรับปรุง 1 เดือน
+];
+function isRoomBlocked(room, checkIn, checkOut) {
+  return BLOCKED_ROOMS.some((b) => {
+    if (String(b.room) !== String(room)) return false;
+    // overlap: booking ทับช่วงที่บล็อกถ้า checkIn < to และ checkOut > from
+    return checkIn < b.to && checkOut > b.from;
+  });
+}
 function getRoomLabel(num) {
   const type = ROOM_TYPE_MAP[String(num).trim()];
   return type ? num + " " + type : num;
@@ -940,7 +953,10 @@ async function syncEmails() {
         const checkOut = normalizeDate(res.checkOut);
         const available = await getAvailableRooms(sheets, candidateRooms, checkIn, checkOut);
         // กรองห้องที่ถูก assign ไปแล้วใน run นี้ (booking อื่นที่เพิ่ง process ในรอบเดียวกัน)
-        const free = available.filter(r => !heldRooms.has(r));
+        // + กรองห้องที่ถูกบล็อกไว้ (เช่น ปิดปรับปรุง) ถ้า booking คาบเกี่ยวช่วงที่ปิด
+        const free = available
+          .filter(r => !heldRooms.has(r))
+          .filter(r => !isRoomBlocked(r, checkIn, checkOut));
 
         if (free.length >= 1) {
           // เรียงเลขห้องน้อยก่อนแล้วเลือกตัวแรก
