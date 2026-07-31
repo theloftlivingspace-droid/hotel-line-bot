@@ -332,9 +332,7 @@ function filterByDate(rows, targetDate) {
     if (/\b363\b/.test(String(room))) continue;  // ห้อง 363 (Mycondo) ไม่ส่งแม่บ้าน
     // ห้อง cancel/ยกเลิก ไม่ส่งเข้ากลุ่มแม่บ้าน
     if (/cancel|ยกเลิก/i.test(room)) continue;
-    const isAirbnb = /ABB-/i.test(channel) || /airbnb/i.test(channel) ||
-                     /ABB-/i.test(resId)   || /airbnb/i.test(resId);
-    const displayNote = (!isAirbnb && note) ? note : "";
+    const displayNote = note || "";
     if (checkIn === targetDate)  checkIns.push({ room, guest, note: displayNote });
     if (checkOut === targetDate) checkOuts.push({ room, guest, note: displayNote });
   }
