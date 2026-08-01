@@ -1355,7 +1355,9 @@ app.post("/api/checkout-notify", adminAuth, async (req, res) => {
 
 app.post("/api/broadcast", adminAuth, async (req, res) => {
   const { message } = req.body; if (!message) return res.status(400).json({ error: "message required" });
-  const targets = Object.values(await loadRooms()).filter(r => r.lineUserId);
+  const rooms = Object.values(await loadRooms()).filter(r => r.lineUserId);
+  // dedupe: user ที่ลงทะเบียนหลายห้อง ควรได้รับข้อความแค่ 1 ครั้งต่อ 1 คน
+  const targets = [...new Map(rooms.map(r => [r.lineUserId, r])).values()];
   let ok = 0, fail = 0;
   for (const room of targets) { try { await linePush(room.lineUserId, [{ type: "text", text: message }]); ok++; } catch { fail++; } await new Promise(r => setTimeout(r, 250)); }
   res.json({ ok, fail, total: targets.length });
