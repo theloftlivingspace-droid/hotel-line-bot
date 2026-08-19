@@ -305,8 +305,9 @@ async function linePush(to, text) {
   }
 }
 
-async function sendNewBookingToAdmin(res, roomLabel, status = null) {
+async function sendNewBookingToAdmin(res, roomLabel, status = null, availableRooms = null) {
   // roomLabel: ห้องที่ auto-assign แล้ว  |  status: "conflict" = ไม่มีห้องว่าง
+  // availableRooms: (เฉพาะกรณี conflict) ห้องที่ยังว่างจริงตามปฏิทิน แม้จะถูก hold/block ไปในรอบนี้ก็ตาม
   const depositLine = res.isAirbnb ? "" : "\n\u{1F4B0} เก็บมัดจำ 3,000 บาท";
   const sep = "\u2500".repeat(25);
   const roomType = getRoomTypeFromName(res.roomName || "");
@@ -318,7 +319,15 @@ async function sendNewBookingToAdmin(res, roomLabel, status = null) {
     hintLine = "\u{2139}\uFE0F แจ้งเพื่อทราบ ไม่ต้องตอบกลับ";
   } else if (status === "conflict") {
     roomLine = "\u26A0\uFE0F " + (roomType || "(ไม่ทราบ type)") + " \u2014 ไม่มีห้องว่างช่วงนี้!";
-    hintLine = "\u{1F447} กรุณาตรวจสอบและระบุห้อง: " + matchedRooms.join(", ");
+    // ใช้ห้องที่ว่างจริงตามปฏิทิน (availableRooms) ถ้ามีให้มา แทนการแสดง "ห้องทั้งหมดของ type นี้"
+    // ซึ่งอาจรวมห้องที่ถูกจองซ้อนอยู่แล้ว และทำให้ admin เลือกห้องที่ไม่ว่างจริงไปโดยไม่รู้ตัว
+    if (availableRooms && availableRooms.length > 0) {
+      hintLine = "\u{1F447} กรุณาตรวจสอบและระบุห้อง (ว่างจริง): " + availableRooms.join(", ");
+    } else if (availableRooms && availableRooms.length === 0) {
+      hintLine = "\u{1F447} ไม่มีห้องว่างจริงเลยในช่วงนี้ — โปรดตรวจสอบด้วยตนเองก่อนระบุห้อง: " + matchedRooms.join(", ");
+    } else {
+      hintLine = "\u{1F447} กรุณาตรวจสอบและระบุห้อง: " + matchedRooms.join(", ");
+    }
   } else if (matchedRooms.length > 1) {
     roomLine = "\u{1F6CF} " + (roomType || "(รอระบุห้อง)");
     hintLine = "\u{1F447} ตอบกลับห้องไหน: " + matchedRooms.join(" หรือ ");
@@ -794,6 +803,34 @@ async function handleLineReply(messageText, sourceId) {
   }
   if (!resId) { console.log("ไม่มีการจองที่รอยืนยัน"); return; }
 
+  // ตรวจสอบว่าห้องที่ admin ระบุเองชนกับการจองอื่นในปฏิทินหรือไม่
+  // ไม่บล็อกการ assign (admin อาจตั้งใจ override เช่น back-to-back turnover) แต่แจ้งเตือนให้ตรวจสอบ
+  let conflictWarning = "";
+  if (!isCancel) {
+    const targetRow = rows.find((r, i) => i >= 1 && (r[5] || "").trim() === resId);
+    const newIn  = normalizeDate(targetRow ? (targetRow[2] || "") : "");
+    const newOut = normalizeDate(targetRow ? (targetRow[3] || "") : "");
+    const targetRoomNum = roomNumber.split(/\s+/)[0];
+    if (newIn && newOut) {
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || (row[5] || "").trim() === resId) continue;
+        const roomCol = (row[0] || "").trim();
+        if (!roomCol || roomCol === "รอยืนยัน" || /cancel|ยกเลิก/i.test(roomCol)) continue;
+        if (roomCol.split(/\s+/)[0] !== targetRoomNum) continue;
+        const existIn  = normalizeDate(row[2] || "");
+        const existOut = normalizeDate(row[3] || "");
+        if (!existIn || !existOut) continue;
+        if (existIn < newOut && existOut > newIn) {
+          conflictWarning = "\u26A0\uFE0F ห้อง " + targetRoomNum + " ชนกับ " + (row[1] || "ไม่ทราบชื่อ") +
+            " (" + existIn + " \u2192 " + existOut + ") \u2014 โปรดตรวจสอบด้วยตนเอง";
+          console.warn("[handleLineReply] conflict: " + conflictWarning);
+          break;
+        }
+      }
+    }
+  }
+
   console.log("reply: ห้อง " + roomNumber + " -> " + resId);
   try {
     const info = await updateRoomInSheet(sheets, resId, roomNumber);
@@ -802,6 +839,7 @@ async function handleLineReply(messageText, sourceId) {
     if (resId === pendingResId) await redisDel("pending_room_resid");
 
     await sendConfirmToAdmin(resId, roomNumber, info.guest);
+    if (conflictWarning) await linePush(ADMIN_ID, conflictWarning);
 
     if (isCancel) {
       // ห้อง cancel → ไม่ส่งอะไรไปกลุ่มแม่บ้านเลย
@@ -980,7 +1018,11 @@ async function syncEmails() {
         await sendNewBookingToAdmin(res, roomLabel);
       } else if (candidateRooms.length >= 1) {
         // ทุกห้องใน type นี้ไม่ว่างในช่วงวันที่จอง (รวมที่ถูก hold ใน run นี้)
-        await sendNewBookingToAdmin(res, null, "conflict");
+        // ส่ง availableRooms (ว่างจริงตามปฏิทิน ก่อนกรอง heldRooms/blocked) ไปให้ admin เห็นตัวเลือกที่ปลอดภัยจริง
+        const checkIn  = normalizeDate(res.checkIn);
+        const checkOut = normalizeDate(res.checkOut);
+        const availableRooms = await getAvailableRooms(sheets, candidateRooms, checkIn, checkOut);
+        await sendNewBookingToAdmin(res, null, "conflict", availableRooms);
       } else {
         await sendNewBookingToAdmin(res, null);
       }
