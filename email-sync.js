@@ -714,8 +714,8 @@ function parseEmail(email) {
 // รับ Reply เลขห้องจาก LINE (admin ส่วนตัว)
 // ─────────────────────────────────────────────
 async function handleLineReply(messageText, sourceId) {
-  // รับเฉพาะจาก admin ส่วนตัว
-  if (sourceId !== ADMIN_ID) return;
+  // รับจาก admin ส่วนตัว — ทั้ง OA หลักและ OA สำรอง (LINE user ID ต่างกันคนละ OA)
+  if (sourceId !== ADMIN_ID && sourceId !== ADMIN_ID_BACKUP) return;
 
   // ─── ยกเลิกการจอง ───────────────────────────
   const cancelMatch = messageText.trim().match(/^ยกเลิก\s+(.+)$/i);

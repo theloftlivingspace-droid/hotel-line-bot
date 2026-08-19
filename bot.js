@@ -410,8 +410,8 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
   return { guest: null, row: null };
 }
 async function handleAdminReply(text, userId) {
-  // รับเฉพาะจากแอดมิน
-  if (ADMIN_USER && userId !== ADMIN_USER) return false;
+  // รับจากแอดมิน — ทั้ง OA หลัก (ADMIN_USER) และ OA สำรอง (ADMIN_USER_2, LINE user ID ต่างกันคนละ OA)
+  if (ADMIN_USER && userId !== ADMIN_USER && userId !== ADMIN_USER_2) return false;
   const match = text.trim().match(/^(?:ห้อง\s*)?(\d{2,3}\w*)$/);
   if (!match) return false;
   const roomNumber = match[1];
@@ -943,6 +943,15 @@ app.post("/webhook-backup", (req, res) => {
               const using = flag === "1" ? "🔁 OA สำรอง" : "✅ OA หลัก";
               await bReply(`📡 ใช้งานอยู่: ${using}`);
             }
+            return;
+          }
+
+          // admin ทักส่วนตัวผ่าน OA สำรอง (เช่น ระบุเลขห้อง/ยกเลิกการจอง) — เดิม route นี้จัดการแค่
+          // ข้อความในกลุ่มเท่านั้น ทำให้ reply ส่วนตัวตอน OA สำรองทำงานอยู่เงียบหายไปเฉยๆ ไม่มีอะไรเกิดขึ้น
+          const isUser = sourceType === "user";
+          if (event.type === "message" && isUser && event.message.type === "text" && (uid === ADMIN_USER || uid === ADMIN_USER_2)) {
+            await handleAdminReply(event.message.text || "", uid);
+            return;
           }
         } catch (err) { console.error("[WebhookBackup Error]", err.message); }
       })();
