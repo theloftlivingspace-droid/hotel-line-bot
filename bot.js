@@ -24,6 +24,17 @@ const path    = require("path");
 const fetch   = require("node-fetch");
 const cron    = require("node-cron");
 const { google } = require("googleapis");
+const { AsyncLocalStorage } = require("async_hooks");
+
+// เก็บ token ของ OA ที่ "เป็นเจ้าของ" event ปัจจุบันไว้ตาม async context ของ request นั้นๆ
+// (main → LINE_TOKEN, backup → LINE_TOKEN_BACKUP) เพื่อให้ lineReply/getLineProfile/
+// downloadLineImage/setRichMenuForUser เลือก token ถูกต้องอัตโนมัติ โดยไม่ต้องส่ง
+// พารามิเตอร์ token ผ่านทุกฟังก์ชันที่เรียกต่อกันเป็นทอดๆ (replyToken/messageId เป็น
+// channel-scoped — ต้องใช้ token คู่กับ channel ที่ event นั้นเข้ามา ไม่งั้น LINE API error)
+const channelContext = new AsyncLocalStorage();
+function currentChannelToken() {
+  return channelContext.getStore()?.token || LINE_TOKEN;
+}
 
 // ─── ENV ────────────────────────────────────────────────────────
 const LINE_TOKEN    = process.env.LINE_CHANNEL_ACCESS_TOKEN        || "";
@@ -76,6 +87,9 @@ async function linePushWithToken(to, messages, token) {
 async function notifyAdminQuotaExhausted(usage) {
   if (!ADMIN_USER) return;
   const token = LINE_TOKEN_BACKUP || LINE_TOKEN;
+  // ถ้าส่งด้วย backup token ต้องส่งหา ADMIN_USER_2 (userId ของแอดมินฝั่ง OA สำรอง —
+  // LINE ออก userId คนละตัวให้คนเดียวกันในแต่ละ OA) ไม่งั้นจะส่งไม่ถึง
+  const target = (token === LINE_TOKEN_BACKUP && ADMIN_USER_2) ? ADMIN_USER_2 : ADMIN_USER;
   const messages = [
     {
       type: "text",
@@ -94,7 +108,7 @@ async function notifyAdminQuotaExhausted(usage) {
     }
   ];
   try {
-    await linePushWithToken(ADMIN_USER, messages, token);
+    await linePushWithToken(target, messages, token);
   } catch (e) {
     console.error("[LINE] แจ้ง admin ไม่ได้:", e.message);
   }
@@ -134,6 +148,7 @@ async function linePush(to, messages) {
     console.warn(`[LINE] quota เหลือน้อย (${remaining}) — เตือน admin`);
     if (ADMIN_USER) {
       const token = LINE_TOKEN_BACKUP || LINE_TOKEN; // ใช้ backup ส่งเตือน ไม่นับ quota หลัก
+      const target = (token === LINE_TOKEN_BACKUP && ADMIN_USER_2) ? ADMIN_USER_2 : ADMIN_USER;
       const warnMsg = {
         type: "text",
         text: `⚠️ LINE OA "Loft Auto Report" quota เหลือ ${remaining} ข้อความ\n\n` +
@@ -148,7 +163,7 @@ async function linePush(to, messages) {
           ]
         }
       };
-      linePushWithToken(ADMIN_USER, [warnMsg], token).catch(() => {});
+      linePushWithToken(target, [warnMsg], token).catch(() => {});
     }
     return linePushWithToken(to, messages, LINE_TOKEN);
   }
@@ -164,23 +179,23 @@ async function linePush(to, messages) {
   console.log(`[LINE] quota เหลือ ${remaining} — ส่งปกติ`);
   return linePushWithToken(to, messages, LINE_TOKEN);
 }
-async function lineReply(replyToken, messages) {
+async function lineReply(replyToken, messages, token = currentChannelToken()) {
   await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${LINE_TOKEN}` },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ replyToken, messages }),
   });
 }
-async function getLineProfile(userId) {
+async function getLineProfile(userId, token = currentChannelToken()) {
   const res = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
-    headers: { Authorization: `Bearer ${LINE_TOKEN}` },
+    headers: { Authorization: `Bearer ${token}` },
   });
   if (res.ok) return res.json();
   return { displayName: "ผู้เช่า" };
 }
-async function downloadLineImage(messageId) {
+async function downloadLineImage(messageId, token = currentChannelToken()) {
   const res = await fetch(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
-    headers: { Authorization: `Bearer ${LINE_TOKEN}` },
+    headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`ดาวน์โหลดรูปล้มเหลว: ${res.status}`);
   return (await res.buffer()).toString("base64");
@@ -457,12 +472,12 @@ function confirmButtons(roomNum, tenantName) {
   };
 }
 
-async function setRichMenuForUser(userId) {
+async function setRichMenuForUser(userId, token = currentChannelToken()) {
   const richMenuId = RICH_MENU_ID;
   if (!richMenuId) return;
   try {
     await fetch(`https://api.line.me/v2/bot/user/${userId}/richmenu/${richMenuId}`, {
-      method: "POST", headers: { Authorization: `Bearer ${LINE_TOKEN}` },
+      method: "POST", headers: { Authorization: `Bearer ${token}` },
     });
   } catch (e) { console.error("[RichMenu Error]", e.message); }
 }
@@ -897,20 +912,27 @@ app.post("/webhook-backup", (req, res) => {
     res.status(200).send("OK");
     let data; try { data = JSON.parse(body); } catch { return; }
     for (const event of (data.events || [])) {
-      (async () => {
+      channelContext.run({ token: LINE_TOKEN_BACKUP || LINE_TOKEN }, async () => {
         try {
           const sourceType = event.source?.type;
           const isGroup = sourceType === "group" || sourceType === "room";
+          const isUser  = sourceType === "user";
           const uid = event.source?.userId || "";
           const gid = event.source?.groupId || "";
           console.log("[WebhookBackup] type=" + event.type + " source=" + sourceType + " userId=" + (uid||"-") + " groupId=" + (gid||"-"));
+
+          // ผู้เช่า/แขก follow OA สำรอง หรือกดปุ่ม postback (เมนูตรวจค่าเช่า/ส่งสลิป ฯลฯ)
+          // เดิม route นี้ไม่เรียก handler พวกนี้เลย ทำให้ระบบเงียบไปทั้งหมดตอนสลับ OA สำรอง
+          if (event.type === "follow")   { await handleFollow(event); return; }
+          if (event.type === "unfollow") { await handleUnfollow(event); return; }
+          if (event.type === "postback") { await handlePostback(event); return; }
 
           // join/leave → สลับ OA อัตโนมัติ
           if (event.type === "join" && isGroup) {
             if (gid === LINE_GROUP_BACKUP) {
               await redisSet("use_backup_oa", "1");
               console.log("[OA] backup OA joined group → use_backup_oa=1");
-              await linePushWithToken(ADMIN_USER, [{ type: "text", text: "🔁 OA สำรองเข้ากลุ่มแม่บ้านแล้ว\n✅ ระบบสลับไปใช้ OA สำรองอัตโนมัติ" }], LINE_TOKEN_BACKUP || LINE_TOKEN).catch(() => {});
+              await linePushWithToken(ADMIN_USER_2 || ADMIN_USER, [{ type: "text", text: "🔁 OA สำรองเข้ากลุ่มแม่บ้านแล้ว\n✅ ระบบสลับไปใช้ OA สำรองอัตโนมัติ" }], LINE_TOKEN_BACKUP || LINE_TOKEN).catch(() => {});
             } else if (gid === LINE_GROUP) {
               await redisSet("use_backup_oa", "0");
               console.log("[OA] primary OA joined group → use_backup_oa=0");
@@ -946,15 +968,23 @@ app.post("/webhook-backup", (req, res) => {
             return;
           }
 
-          // admin ทักส่วนตัวผ่าน OA สำรอง (เช่น ระบุเลขห้อง/ยกเลิกการจอง) — เดิม route นี้จัดการแค่
-          // ข้อความในกลุ่มเท่านั้น ทำให้ reply ส่วนตัวตอน OA สำรองทำงานอยู่เงียบหายไปเฉยๆ ไม่มีอะไรเกิดขึ้น
-          const isUser = sourceType === "user";
+          // admin ทักส่วนตัวผ่าน OA สำรอง (เช่น ระบุเลขห้อง/ยกเลิกการจอง)
           if (event.type === "message" && isUser && event.message.type === "text" && (uid === ADMIN_USER || uid === ADMIN_USER_2)) {
             await handleAdminReply(event.message.text || "", uid);
             return;
           }
+
+          // ผู้เช่า/แขกทั่วไป (ไม่ใช่ admin) ทักแชท 1:1 หรือส่งรูปสลิปผ่าน OA สำรอง
+          if (event.type === "message" && isUser && event.message.type === "text") {
+            await handleUserMessage(event);
+            return;
+          }
+          if (event.type === "message" && isUser && event.message.type === "image") {
+            await handleImageMessage(event);
+            return;
+          }
         } catch (err) { console.error("[WebhookBackup Error]", err.message); }
-      })();
+      });
     }
   });
 });
@@ -967,7 +997,7 @@ app.post("/webhook", (req, res) => {
     res.status(200).send("OK");
     let data; try { data = JSON.parse(body); } catch { return; }
     for (const event of (data.events || [])) {
-      (async () => {
+      channelContext.run({ token: LINE_TOKEN }, async () => {
         try {
           const sourceType = event.source?.type;
           const isGroup = sourceType === "group" || sourceType === "room";
@@ -985,7 +1015,7 @@ app.post("/webhook", (req, res) => {
                 // OA สำรองเข้ากลุ่มใหม่ → สลับไป backup
                 await redisSet("use_backup_oa", "1");
                 console.log("[OA] backup OA joined group → use_backup_oa=1");
-                await linePushWithToken(ADMIN_USER, [{ type: "text", text: "🔁 OA สำรองเข้ากลุ่มแม่บ้านแล้ว\n✅ ระบบสลับไปใช้ OA สำรองอัตโนมัติ" }], LINE_TOKEN_BACKUP || LINE_TOKEN).catch(() => {});
+                await linePushWithToken(ADMIN_USER_2 || ADMIN_USER, [{ type: "text", text: "🔁 OA สำรองเข้ากลุ่มแม่บ้านแล้ว\n✅ ระบบสลับไปใช้ OA สำรองอัตโนมัติ" }], LINE_TOKEN_BACKUP || LINE_TOKEN).catch(() => {});
               } else {
                 // OA หลักเข้ากลุ่ม → สลับกลับ primary
                 await redisSet("use_backup_oa", "0");
@@ -1046,7 +1076,7 @@ app.post("/webhook", (req, res) => {
             if (isUser  && event.message.type === "image") { await handleImageMessage(event); return; }
           }
         } catch (err) { console.error("[Event Error]", err.message); }
-      })();
+      });
     }
   });
 });
