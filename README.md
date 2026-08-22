@@ -2,7 +2,7 @@
 ## คู่มือติดตั้ง — ใช้ LINE Messaging API
 
 ส่งข้อมูล **เช็คอิน / เช็คเอาท์** ของวันพรุ่งนี้ไปกลุ่มไลน์แม่บ้าน  
-**อัตโนมัติทุกวัน เวลา 19:00 น.** — ฟรี รันบน Railway
+**อัตโนมัติทุกวัน เวลา 19:00 น.** — ฟรี รันบน Render
 
 ---
 
@@ -43,23 +43,23 @@
 
 ---
 
-## ขั้นตอนที่ 2 — Deploy บน Railway + รับ Webhook URL
+## ขั้นตอนที่ 2 — Deploy บน Render + รับ Webhook URL
 
 **2.1 อัปโหลดโค้ดขึ้น GitHub**
 1. สมัคร https://github.com (ถ้ายังไม่มี)
 2. สร้าง repository ใหม่ชื่อ `hotel-line-bot`
 3. อัปโหลดไฟล์ทั้งหมดในโฟลเดอร์นี้
 
-**2.2 Deploy บน Railway**
-1. เปิด https://railway.app → สมัครด้วย GitHub
-2. **"New Project"** → **"Deploy from GitHub repo"** → เลือก `hotel-line-bot`
-3. ไปที่ **Settings → Networking → Generate Domain**
-4. จด URL ที่ได้ เช่น `https://hotel-line-bot-xxx.railway.app`
+**2.2 Deploy บน Render**
+1. เปิด https://dashboard.render.com → สมัครด้วย GitHub
+2. **"New +"** → **"Web Service"** → เลือก repo `hotel-line-bot`
+3. Build Command: `npm install` / Start Command: `node bot.js`
+4. Render จะออก URL ให้อัตโนมัติ เช่น `https://hotel-line-bot.onrender.com` (ดูได้บนหน้า service)
 
 **2.3 ตั้ง Webhook ใน LINE Developers**
 1. กลับไปที่ https://developers.line.biz → Channel ของคุณ
 2. Tab **"Messaging API"** → หา **"Webhook URL"**
-3. ใส่: `https://hotel-line-bot-xxx.railway.app/webhook`
+3. ใส่: `https://hotel-line-bot.onrender.com/webhook`
 4. กด **"Verify"** → ต้องขึ้น **"Success"**
 5. เปิด **"Use webhook"** เป็น ON
 
@@ -70,7 +70,7 @@
 1. เพิ่มบอท LINE เข้ากลุ่มไลน์แม่บ้าน  
    *(ค้นหาชื่อบอทใน LINE หรือสแกน QR จาก LINE Developers)*
 2. พิมพ์ข้อความใดๆ ในกลุ่ม
-3. เปิด **Railway → Deployments → View Logs**
+3. เปิด **Render → service → Logs**
 4. จะเห็น log ว่า:
    ```
    🎯 พบ LINE_GROUP_ID: C1234567890abcdef...
@@ -80,9 +80,9 @@
 
 ---
 
-## ขั้นตอนที่ 4 — ใส่ Environment Variables ใน Railway
+## ขั้นตอนที่ 4 — ใส่ Environment Variables ใน Render
 
-ไปที่ Railway → project → **Variables** → เพิ่มทีละตัว:
+ไปที่ Render → service → **Environment** → เพิ่มทีละตัว:
 
 | Variable | ค่า |
 |----------|-----|
@@ -92,13 +92,13 @@
 | `LINE_GROUP_ID` | Group ID จากขั้นตอนที่ 3 |
 | `CRON_SCHEDULE` | `0 19 * * *` |
 
-กด **Deploy** อีกครั้ง — บอทพร้อมทำงาน ✅
+กด **Manual Deploy** อีกครั้ง (หรือรอ auto-deploy) — บอทพร้อมทำงาน ✅
 
 ---
 
 ## ทดสอบส่งข้อความทันที
 
-ใน Railway Logs จะมีคำสั่ง หรือรันใน terminal:
+ดูใน Render Logs หรือรันใน terminal:
 ```bash
 node bot.js --test
 ```
@@ -109,11 +109,14 @@ node bot.js --test
 
 ```
 hotel-line-bot/
-├── bot.js           ← โค้ดหลัก (scraping + LINE Messaging API)
+├── bot.js           ← โค้ดหลัก (webhook + cron + LINE Messaging API)
+├── email-sync.js    ← sync อีเมลจอง OTA
+├── push-badge.js    ← Web Push badge (the-loft-admin PWA)
+├── slip-push.js     ← Web Push แจ้งสลิปใหม่ (Billing Console)
 ├── .env.example     ← ตัวอย่างค่า config
 ├── package.json     ← dependencies
-├── railway.toml     ← Railway config
-├── nixpacks.toml    ← Browser dependencies
+├── Procfile         ← start command (Render อ่านไฟล์นี้ได้)
+├── Dockerfile
 └── README.md
 ```
 
@@ -125,5 +128,5 @@ hotel-line-bot/
 |-------|---------|
 | Login Little Hotelier ไม่ได้ | ตรวจ LH_EMAIL / LH_PASSWORD |
 | LINE ไม่ได้รับข้อความ | ตรวจ LINE_CHANNEL_ACCESS_TOKEN และ LINE_GROUP_ID |
-| Webhook Verify ไม่ผ่าน | ตรวจ Railway URL และ `/webhook` ต่อท้าย |
-| ข้อมูลห้องว่างเปล่า | ดู log ใน Railway — อาจต้องปรับ CSS selector |
+| Webhook Verify ไม่ผ่าน | ตรวจ Render URL และ `/webhook` ต่อท้าย |
+| ข้อมูลห้องว่างเปล่า | ดู log ใน Render — อาจต้องปรับ CSS selector |
