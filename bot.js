@@ -116,10 +116,14 @@ async function notifyAdminQuotaExhausted(usage) {
 
 // push หลัก → เช็ค Redis flag ก่อน ถ้าสลับ OA แล้วใช้ backup ทันที
 async function linePush(to, messages) {
-  // admin กด "สลับ OA แล้ว" → ใช้ backup token + group ทันที ไม่เช็ค quota
+  // admin กด "สลับ OA แล้ว" → ใช้ backup token + group/ผู้รับที่ถูกต้องทันที ไม่เช็ค quota
   const useBackup = await redisGet("use_backup_oa");
   if (useBackup === "1" && LINE_TOKEN_BACKUP) {
-    const target = (to === LINE_GROUP && LINE_GROUP_BACKUP) ? LINE_GROUP_BACKUP : to;
+    // remap ทั้งกลุ่มแม่บ้านและ admin เป็น userId/groupId ฝั่ง OA สำรอง (LINE ออกให้คนละตัว
+    // ต่อ channel) ไม่งั้นส่งด้วย backup token ไปหา ID ฝั่งหลักจะไม่ถึงผู้รับ
+    const target = (to === LINE_GROUP && LINE_GROUP_BACKUP) ? LINE_GROUP_BACKUP
+                 : (to === ADMIN_USER && ADMIN_USER_2)      ? ADMIN_USER_2
+                 : to;
     console.log("[LINE] Redis flag use_backup_oa=1 — ใช้ OA สำรอง");
     return linePushWithToken(target, messages, LINE_TOKEN_BACKUP);
   }
