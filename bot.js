@@ -1397,6 +1397,42 @@ app.post("/api/checkout-notify", adminAuth, async (req, res) => {
   }
 });
 
+// เช็คตามกติกาเดียวกับ cancel-notify: ถ้ายังไม่ถึงรอบประกาศ 19:00 สำหรับ checkin
+// นี้ แปลว่าแม่บ้านยังไม่รู้จักบุ๊คกิ้งนี้เลย — Sheet1 ที่อัปเดตห้องใหม่ไปแล้วจะ
+// ถูกต้องอยู่แล้วตอน batch 19:00 ดึงไปแจ้งเอง ไม่ต้องยิงซ้ำ
+app.post("/api/room-move-notify", adminAuth, async (req, res) => {
+  const { resId, guest, oldRoom, newRoom, checkin, effectiveDate, splitBooking, segmentBResId } = req.body;
+  if (!guest || !oldRoom || !newRoom) {
+    return res.status(400).json({ ok: false, error: "guest, oldRoom, newRoom required" });
+  }
+
+  if (!wasCheckinAlreadyAnnounced(checkin)) {
+    return res.json({ ok: true, skipped: true, reason: "not yet announced to maid group" });
+  }
+
+  const msg = splitBooking
+    ? [
+        "📍 ย้ายห้องด่วน (เช็คอินแล้ว)",
+        resId ? `ResId: ${resId}` : null,
+        `👤 ${guest}`,
+        `🧳 เช็คเอาท์ห้อง ${oldRoom} วันที่ ${effectiveDate}`,
+        `🏠 เช็คอินห้อง ${newRoom} วันเดียวกัน${segmentBResId ? ` (ResId ${segmentBResId})` : ""}`,
+      ].filter(Boolean).join("\n")
+    : [
+        "📍 แก้ไขห้องด่วน",
+        resId ? `ResId: ${resId}` : null,
+        `👤 ${guest}`,
+        `🏠 ห้อง ${oldRoom} → ${newRoom}`,
+      ].filter(Boolean).join("\n");
+
+  try {
+    await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
 app.post("/api/broadcast", adminAuth, async (req, res) => {
   const { message } = req.body; if (!message) return res.status(400).json({ error: "message required" });
   const rooms = Object.values(await loadRooms()).filter(r => r.lineUserId);
