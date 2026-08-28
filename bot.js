@@ -400,18 +400,54 @@ const GAS_STYLE_URL = "https://script.google.com/macros/s/AKfycbxwlKBtlw74Z52ryA
 // bot.js เขียนลง Sheet1 ตรงๆ ผ่าน Sheets API (ไม่ผ่าน GAS webapp เลย) —
 // เพราะงั้นต้องยิง styleSheet1 เองหลังเขียนทุกครั้ง เหมือนที่ email-sync.js ทำ
 // ไม่งั้นแถวที่ handleAdminReply ใส่เลขห้องจะไม่ถูก sort/format ตาม
+//
+// Retries on top of the original fire-and-forget POST — same fix as
+// email-sync.js's triggerStyleSheet1() and loft-booking-invoice-todo's
+// triggerStyleSheet1_(): a busy GAS ScriptLock still returns HTTP 200 with
+// {ok:false, skipped:true}, which the old version here treated as success
+// (didn't check the body, never retried), so the room-number row this
+// writes could end up permanently unstyled.
+const STYLE_MAX_ATTEMPTS = 3;
+const STYLE_BACKOFF_MS = [1000, 3000]; // between attempt 1→2 and 2→3
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function triggerStyleSheet1() {
-  try {
-    await fetch(GAS_STYLE_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "styleSheet1" }),
-      redirect: "follow",
-    });
-    console.log("styleSheet1: triggered OK");
-  } catch (e) {
-    console.error("styleSheet1: trigger failed:", e.message);
+  for (let attempt = 1; attempt <= STYLE_MAX_ATTEMPTS; attempt++) {
+    try {
+      const resp = await fetch(GAS_STYLE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "styleSheet1" }),
+        redirect: "follow",
+      });
+      let ok = false;
+      let bodyText = "";
+      if (resp.status === 200) {
+        bodyText = await resp.text();
+        try {
+          const parsed = JSON.parse(bodyText);
+          ok = parsed && parsed.ok === true;
+        } catch (_) {
+          ok = false; // unparseable body — treat as failure, retry
+        }
+      }
+      if (ok) {
+        if (attempt > 1) console.log(`styleSheet1: succeeded on attempt ${attempt}`);
+        else console.log("styleSheet1: triggered OK");
+        return;
+      }
+      console.error(`styleSheet1: attempt ${attempt}/${STYLE_MAX_ATTEMPTS} non-success ` +
+        `(http ${resp.status}) — ${bodyText.slice(0, 200)}`);
+    } catch (e) {
+      console.error(`styleSheet1: attempt ${attempt}/${STYLE_MAX_ATTEMPTS} error — ${e.message}`);
+    }
+    if (attempt < STYLE_MAX_ATTEMPTS) await sleep(STYLE_BACKOFF_MS[attempt - 1]);
   }
+  console.error("styleSheet1: FAILED after " + STYLE_MAX_ATTEMPTS + " attempts — Sheet1 formatting " +
+    "is now stale (the row just written may show no styling until styleSheet1() runs again).");
 }
 async function updateRoomInSheet(sheets, resId, roomNumber) {
   const result = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:G" });

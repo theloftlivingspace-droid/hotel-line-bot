@@ -107,17 +107,47 @@ function getSheets() {
 // ─────────────────────────────────────────────
 // Trigger styleSheet1 ใน GAS (sort + format Sheet1)
 // ─────────────────────────────────────────────
+// Retries on top of the original fire-and-forget POST — payout-income-log's
+// styleSheet1() holds a ScriptLock, so a busy lock (another instance already
+// running) still responds HTTP 200 but with {ok:false, skipped:true} — no
+// styling actually ran. The old version here only checked that the POST
+// didn't throw, logged "triggered OK" regardless, and never retried, so a
+// row written by addPendingRow/appendRow right when the lock was busy could
+// sit permanently unstyled (no zebra stripe, no room color, no channel
+// color) until someone ran styleSheet1() manually. Ports the same fix
+// loft-booking-invoice-todo's triggerStyleSheet1_() already has: check
+// body.ok, not just HTTP status, and retry with backoff.
+const STYLE_MAX_ATTEMPTS = 3;
+const STYLE_BACKOFF_MS = [1000, 3000]; // between attempt 1→2 and 2→3
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function triggerStyleSheet1() {
-  try {
-    await axios.post(GAS_STYLE_URL, { action: "styleSheet1" }, {
-      headers: { "Content-Type": "application/json" },
-      maxRedirects: 5,
-      timeout: 30000,
-    });
-    console.log("styleSheet1: triggered OK");
-  } catch (e) {
-    console.error("styleSheet1: trigger failed:", e.message);
+  for (let attempt = 1; attempt <= STYLE_MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await axios.post(GAS_STYLE_URL, { action: "styleSheet1" }, {
+        headers: { "Content-Type": "application/json" },
+        maxRedirects: 5,
+        timeout: 30000,
+        validateStatus: () => true, // inspect body.ok ourselves below
+      });
+      const ok = res.status === 200 && res.data && res.data.ok === true;
+      if (ok) {
+        if (attempt > 1) console.log(`styleSheet1: succeeded on attempt ${attempt}`);
+        else console.log("styleSheet1: triggered OK");
+        return;
+      }
+      console.error(`styleSheet1: attempt ${attempt}/${STYLE_MAX_ATTEMPTS} non-success ` +
+        `(http ${res.status}) — ${JSON.stringify(res.data).slice(0, 200)}`);
+    } catch (e) {
+      console.error(`styleSheet1: attempt ${attempt}/${STYLE_MAX_ATTEMPTS} error — ${e.message}`);
+    }
+    if (attempt < STYLE_MAX_ATTEMPTS) await sleep(STYLE_BACKOFF_MS[attempt - 1]);
   }
+  console.error("styleSheet1: FAILED after " + STYLE_MAX_ATTEMPTS + " attempts — Sheet1 formatting " +
+    "is now stale (the row(s) just written may show no styling until styleSheet1() runs again).");
 }
 
 async function getEmailLog(sheets) {
