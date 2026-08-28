@@ -961,11 +961,9 @@ app.post("/webhook-backup", (req, res) => {
           const gid = event.source?.groupId || "";
           console.log("[WebhookBackup] type=" + event.type + " source=" + sourceType + " userId=" + (uid||"-") + " groupId=" + (gid||"-"));
 
-          // ผู้เช่า/แขก follow OA สำรอง หรือกดปุ่ม postback (เมนูตรวจค่าเช่า/ส่งสลิป ฯลฯ)
-          // เดิม route นี้ไม่เรียก handler พวกนี้เลย ทำให้ระบบเงียบไปทั้งหมดตอนสลับ OA สำรอง
-          if (event.type === "follow")   { await handleFollow(event); return; }
-          if (event.type === "unfollow") { await handleUnfollow(event); return; }
-          if (event.type === "postback") { await handlePostback(event); return; }
+          // OA สำรอง = ช่องทางฉุกเฉินสำหรับแอดมินเท่านั้น ไม่ตอบผู้เช่า/แขกทั่วไป
+          // (เดิมเคยเปิด follow/unfollow/postback ให้แขกด้วย ทำให้ OA สำรองตอบทุกข้อความ — ปิดกลับ)
+          if (event.type === "follow" || event.type === "unfollow" || event.type === "postback") return;
 
           // join/leave → สลับ OA อัตโนมัติ
           if (event.type === "join" && isGroup) {
@@ -1014,15 +1012,8 @@ app.post("/webhook-backup", (req, res) => {
             return;
           }
 
-          // ผู้เช่า/แขกทั่วไป (ไม่ใช่ admin) ทักแชท 1:1 หรือส่งรูปสลิปผ่าน OA สำรอง
-          if (event.type === "message" && isUser && event.message.type === "text") {
-            await handleUserMessage(event);
-            return;
-          }
-          if (event.type === "message" && isUser && event.message.type === "image") {
-            await handleImageMessage(event);
-            return;
-          }
+          // ผู้เช่า/แขกทั่วไป (ไม่ใช่ admin) ทักแชท 1:1 หรือส่งรูปสลิปผ่าน OA สำรอง — ไม่ตอบ
+          // (OA สำรองเป็นช่องทางฉุกเฉินของแอดมินอย่างเดียว)
         } catch (err) { console.error("[WebhookBackup Error]", err.message); }
       });
     }
