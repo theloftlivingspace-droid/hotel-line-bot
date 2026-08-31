@@ -720,7 +720,6 @@ function parseEmail(email) {
     return null;
   }
 
-  const codeMatch = (subject + " " + body).match(/\b[A-Z]{2,4}-[A-Z0-9]{6,}\b/);
   const guestKey  = guest.toLowerCase().replace(/[^a-z]/g, "").substring(0, 10) || Buffer.from(guest).toString("hex").substring(0, 10);
   const isAirbnb  = /airbnb/i.test(channel);
   const prefix    = /airbnb/i.test(channel)  ? "ABB" :
@@ -733,7 +732,10 @@ function parseEmail(email) {
   const emailDateStr = email.date
     ? new Date(email.date).toISOString().slice(0, 10).replace(/-/g, "")
     : new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const resId     = codeMatch ? codeMatch[0] : (prefix + "-" + guestKey + "-" + emailDateStr);
+  // ห้ามใช้ confirmation code เป็น resId (เคยทำมาก่อน) เพราะ parseExpediaDetailEmail()
+  // ใช้สูตร prefix+guestKey+emailDate เสมอ — ถ้าที่นี่ใช้ code แทน จะได้ resId คนละอันกับ
+  // อีเมล detail-table ของ booking เดียวกัน แล้ว dedupe ที่ notifiedIds.has() จับไม่ได้ → เข้า Sheet1 ซ้ำ
+  const resId     = prefix + "-" + guestKey + "-" + emailDateStr;
 
   console.log("parse OK: " + resId + " | " + guest + " | " + channel + " | " + checkIn + " -> " + checkOut);
 
