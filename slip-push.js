@@ -123,7 +123,7 @@ async function notifyNewSlip(payment) {
     title: "💰 สลิปใหม่เข้า",
     body,
     tag: `slip-${payment.id}`,
-    url: "/", // Billing Console root; tenant will land on Payments tab (already default)
+    url: `/?page=payments&slip=${payment.id}`, // deep-links straight into the Payments tab, highlighting this slip
     count,
   });
   console.log(`[slip-push] pushed new slip id=${payment.id} room=${payment.roomNumber} pendingCount=${count}`);

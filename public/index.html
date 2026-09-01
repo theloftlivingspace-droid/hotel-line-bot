@@ -429,7 +429,34 @@ async function login(){
     loadMoveouts();
     registerSW();
     refreshBellIcon();
+    applyDeepLink();
   }catch{alert("Token ไม่ถูกต้อง หรือ Server ไม่ตอบสนอง");}
+}
+
+// ─── Deep link from push notifications (?page=payments&slip=ID) ───────────
+function applyDeepLink(){
+  const p=new URLSearchParams(window.location.search);
+  const page=p.get("page");
+  const slip=p.get("slip");
+  if(!page) return;
+  showPage(page);
+  if(page==="payments"&&slip) highlightSlip(slip);
+  history.replaceState(null,'',window.location.pathname);
+}
+function highlightSlip(id){
+  let tries=0;
+  const tryHighlight=()=>{
+    const el=document.getElementById(`payment-${id}`);
+    if(el){
+      el.scrollIntoView({behavior:"smooth",block:"center"});
+      el.style.transition="background-color .3s";
+      el.style.backgroundColor="#fef9c3";
+      setTimeout(()=>{el.style.backgroundColor="";},2500);
+    }else if(tries++<10){
+      setTimeout(tryHighlight,300);
+    }
+  };
+  tryHighlight();
 }
 
 // ─── Push notifications (new-slip alerts) ──────────────────────────────────
@@ -725,7 +752,7 @@ async function loadPayments(){
     if(navigator.setAppBadge){ pending.length?navigator.setAppBadge(pending.length).catch(()=>{}):navigator.clearAppBadge().catch(()=>{}); }
     if(!payments.length){el.innerHTML='<div class="empty">ยังไม่มีสลิปที่ส่งมาค่ะ</div>';return;}
     el.innerHTML=payments.map(p=>`
-      <div style="padding:16px;border-bottom:1px solid #f1f5f9">
+      <div id="payment-${p.id}" style="padding:16px;border-bottom:1px solid #f1f5f9">
         <!-- Header: ห้อง + สถานะ + ปุ่ม -->
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px">
           <div>
