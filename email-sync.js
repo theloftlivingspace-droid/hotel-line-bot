@@ -151,13 +151,16 @@ async function triggerStyleSheet1() {
 }
 
 async function getEmailLog(sheets) {
-  try {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: "email_log!A:F",
-    });
-    return res.data.values || [];
-  } catch (_) { return []; }
+  // Previously: catch(_){ return [] } — any failure here (bad tab name, quota,
+  // auth) was indistinguishable from a genuinely empty log. syncEmails() then
+  // treated the whole 4-month fetch window as "new", re-notifying and
+  // re-inserting every booking on every 30-min cron tick, forever. Surface
+  // the failure instead so syncEmails() can abort rather than backfill.
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: "email_log!A:F",
+  });
+  return res.data.values || [];
 }
 
 async function appendEmailLog(sheets, res) {
@@ -974,7 +977,24 @@ async function syncEmails() {
   console.log("[" + new Date().toLocaleString("th-TH") + "] ตรวจอีเมลใหม่...");
   try {
     const sheets = getSheets();
-    const log    = await getEmailLog(sheets);
+    let log;
+    try {
+      log = await getEmailLog(sheets);
+    } catch (e) {
+      // Reading email_log failed — do NOT proceed as if it's empty, or we'll
+      // re-notify + re-insert the entire fetch window on every cron tick.
+      // Abort this run and alert the admin so it gets fixed instead of
+      // silently flooding LINE every 30 minutes.
+      console.error("sync error: ไม่สามารถอ่าน email_log ได้ (" + e.message + ") — ยกเลิกรอบนี้ ไม่ backfill");
+      try {
+        await axios.post(
+          `https://api.line.me/v2/bot/message/push`,
+          { to: ADMIN_ID, messages: [{ type: "text", text: "⚠️ Sync ล้มเหลว: อ่าน email_log ไม่ได้ (" + e.message + ") — ข้ามรอบนี้เพื่อป้องกัน spam ซ้ำ กรุณาตรวจสอบชีท/สิทธิ์ service account" }] },
+          { headers: { Authorization: `Bearer ${LINE_TOKEN}`, "Content-Type": "application/json" } }
+        );
+      } catch (_) { /* best-effort alert only */ }
+      return;
+    }
     const dataRows = (log.length > 0 && log[0][0] === "resId") ? log.slice(1) : log;
     const notifiedIds = new Set(dataRows.map((r) => r[0]).filter(Boolean));
     console.log("email_log: " + notifiedIds.size + " รายการ");
