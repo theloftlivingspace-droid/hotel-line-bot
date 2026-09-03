@@ -1099,6 +1099,16 @@ async function syncEmails() {
       }
 
       notifiedIds.add(res.resId);
+      // Keep dataRows in sync too — the exactDup check above reads dataRows,
+      // not notifiedIds. Without this, a same-run duplicate (e.g. Little
+      // Hotelier's summary email + detail email for the same reservation,
+      // both with identical dates) passes notifiedIds.has() but finds no
+      // matching row in dataRows (still the pre-run snapshot), fails
+      // exactDup, and gets a -R suffixed resId — a real duplicate row in
+      // Sheet1. Confirmed 2026-09-03: AR Nonthanan (EXP-arnonthana-20260511)
+      // appeared twice this way, one auto-assigned to 108, one stuck
+      // "รอยืนยัน". Appending here fixes it going forward.
+      dataRows.push([res.resId, res.guest, res.roomName, res.checkIn, res.checkOut, res.note]);
       newCount++;
     }
     console.log("ตรวจเสร็จ (ใหม่ " + newCount + " รายการ)");
