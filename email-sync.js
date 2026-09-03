@@ -150,17 +150,36 @@ async function triggerStyleSheet1() {
     "is now stale (the row(s) just written may show no styling until styleSheet1() runs again).");
 }
 
+// Confirmed 2026-09-03: email_log has real history going back to March —
+// a same-day sync run reported "email_log: 0 รายการ" and re-notified ~249
+// already-logged bookings, even though the tab was fetched moments later
+// and had full data. So the earlier get() call really was failing
+// transiently (quota/token contention with the other systems — GAS-based
+// payout-income-log / loft-booking-invoice-todo — sharing this same
+// spreadsheet+service account), not returning a genuinely empty log.
+// Retry with backoff here so a 1-2s collision doesn't abort the whole
+// sync run; only bail out (to the caller's abort-and-alert path) if it's
+// still failing after 3 tries.
+const LOG_READ_MAX_ATTEMPTS = 3;
+const LOG_READ_BACKOFF_MS = [1000, 3000]; // between attempt 1→2 and 2→3
+
 async function getEmailLog(sheets) {
-  // Previously: catch(_){ return [] } — any failure here (bad tab name, quota,
-  // auth) was indistinguishable from a genuinely empty log. syncEmails() then
-  // treated the whole 4-month fetch window as "new", re-notifying and
-  // re-inserting every booking on every 30-min cron tick, forever. Surface
-  // the failure instead so syncEmails() can abort rather than backfill.
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: "email_log!A:F",
-  });
-  return res.data.values || [];
+  let lastErr;
+  for (let attempt = 1; attempt <= LOG_READ_MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: SHEET_ID,
+        range: "email_log!A:F",
+      });
+      if (attempt > 1) console.log(`getEmailLog: succeeded on attempt ${attempt}`);
+      return res.data.values || [];
+    } catch (e) {
+      lastErr = e;
+      console.error(`getEmailLog: attempt ${attempt}/${LOG_READ_MAX_ATTEMPTS} error — ${e.message}`);
+      if (attempt < LOG_READ_MAX_ATTEMPTS) await sleep(LOG_READ_BACKOFF_MS[attempt - 1]);
+    }
+  }
+  throw lastErr;
 }
 
 async function appendEmailLog(sheets, res) {
