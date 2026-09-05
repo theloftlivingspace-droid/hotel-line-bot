@@ -148,7 +148,15 @@ async function linePush(to, messages) {
   }
 
   // เหลือ ≤ 10 → เตือน admin ล่วงหน้า แต่ยังส่งได้
+  // เตือนแค่ครั้งเดียวต่อวัน กันสแปม (burst ส่งหลายข้อความรวดเดียว เช่น
+  // รอบแจ้งเตือนค่าเช่า จะไล่ remaining ลดลงทีละ 1 → เดิมเตือนทุกข้อความ)
   if (remaining > 0 && remaining <= 10) {
+    const todayBKK = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" });
+    const alreadyWarnedToday = await redisGet("quota_warn_date");
+    if (alreadyWarnedToday === todayBKK) {
+      return linePushWithToken(to, messages, LINE_TOKEN);
+    }
+    await redisSet("quota_warn_date", todayBKK);
     console.warn(`[LINE] quota เหลือน้อย (${remaining}) — เตือน admin`);
     if (ADMIN_USER) {
       const token = LINE_TOKEN_BACKUP || LINE_TOKEN; // ใช้ backup ส่งเตือน ไม่นับ quota หลัก
