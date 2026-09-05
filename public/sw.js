@@ -52,7 +52,10 @@ self.addEventListener("notificationclick", (event) => {
         const clientUrl = new URL(client.url);
         if (clientUrl.origin === self.location.origin) {
           await client.focus();
-          if ("navigate" in client) await client.navigate(url);
+          // client.navigate() is unreliable for standalone/home-screen PWAs on iOS
+          // Safari — it often just focuses the app without actually navigating.
+          // postMessage lets the already-open page switch tabs itself instead.
+          client.postMessage({ type: "deep-link", url });
           return;
         }
       }

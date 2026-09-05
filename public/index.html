@@ -443,6 +443,21 @@ function applyDeepLink(){
   if(page==="payments"&&slip) highlightSlip(slip);
   history.replaceState(null,'',window.location.pathname);
 }
+// App is already open when a notification is tapped (common on iOS standalone
+// PWAs, where the service worker's client.navigate() doesn't reliably fire) —
+// the SW posts the deep-link URL here instead so we can switch pages in-place.
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.addEventListener("message",(e)=>{
+    if(e.data?.type==="deep-link"&&e.data.url){
+      const u=new URL(e.data.url,window.location.origin);
+      const page=u.searchParams.get("page");
+      const slip=u.searchParams.get("slip");
+      if(!page) return;
+      showPage(page);
+      if(page==="payments"&&slip) highlightSlip(slip);
+    }
+  });
+}
 function highlightSlip(id){
   let tries=0;
   const tryHighlight=()=>{
