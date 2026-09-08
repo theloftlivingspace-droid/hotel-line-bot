@@ -1422,9 +1422,34 @@ app.post("/api/cancel-notify", adminAuth, async (req, res) => {
   }
 });
 
+// ── Dedup guard สำหรับ checkout-notify ──────────────────────────────────
+// ปกติ Code.gs กันยิงซ้ำอยู่แล้วด้วย idempotency check ที่ผูกกับ resId แต่
+// booking เดียวกันอาจมี "resId" มากกว่า 1 ตัวที่ชี้ไปห้อง/แขก/วันเดียวกันได้
+// จริงๆ (เช่น หลังย้ายห้องแบบ split booking ได้ resId ใหม่ segment B, หรือ
+// แถวจองซ้ำใน Sheet1) — แต่ละ resId ผ่าน idempotency check ของตัวเองได้เพราะ
+// เป็นคนละ resId ทั้งที่เนื้อหาข้อความที่จะส่งเข้ากลุ่มเหมือนกันเป๊ะ ผลคือ
+// ข้อความ "Checkout แล้ว" ห้องเดียวกัน/แขกคนเดียวกัน/วันเดียวกัน ขึ้นซ้ำใน
+// กลุ่มแม่บ้าน กันซ้ำอีกชั้นตรงนี้โดยดูจากเนื้อหาข้อความจริง (room+guest+
+// checkin+checkout) ไม่สนใจ resId เลย — ถ้าเคยส่งไปแล้วภายใน 24 ชม. ให้ข้าม
+const recentCheckoutNotifies = new Map(); // key -> timestamp (ms)
+const CHECKOUT_NOTIFY_DEDUP_MS = 24 * 60 * 60 * 1000;
+function pruneRecentCheckoutNotifies() {
+  const cutoff = Date.now() - CHECKOUT_NOTIFY_DEDUP_MS;
+  for (const [key, ts] of recentCheckoutNotifies) {
+    if (ts < cutoff) recentCheckoutNotifies.delete(key);
+  }
+}
+
 app.post("/api/checkout-notify", adminAuth, async (req, res) => {
   const { room, guest, checkin, checkout } = req.body;
   if (!room || !guest) return res.status(400).json({ ok: false, error: "room and guest required" });
+
+  pruneRecentCheckoutNotifies();
+  const dedupKey = [room, guest, checkin, checkout].join("|").trim().toLowerCase();
+  if (recentCheckoutNotifies.has(dedupKey)) {
+    return res.json({ ok: true, skipped: true, reason: "duplicate checkout-notify (same room/guest/dates already sent)" });
+  }
+
   const msg = [
     "🧳 Checkout แล้ว",
     `🏠 ห้อง ${room}`,
@@ -1433,6 +1458,7 @@ app.post("/api/checkout-notify", adminAuth, async (req, res) => {
   ].join("\n");
   try {
     await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    recentCheckoutNotifies.set(dedupKey, Date.now());
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
