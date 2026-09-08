@@ -992,7 +992,17 @@ function fetchEmails(since) {
 // ─────────────────────────────────────────────
 // MAIN SYNC
 // ─────────────────────────────────────────────
-async function syncEmails() {
+// syncEmails() ทั้งสองจุดที่เรียก (cron ทุก 30 นาที + runHotelJob ที่เรียกก่อนสรุป
+// 19:00) อาจชนกันพอดีเมื่อ cron ตรงกับรอบ :00/:30 — ถ้าไม่ล็อกไว้ ตัวที่ 2 จะอ่าน
+// email_log ก่อนตัวแรกเขียนเสร็จ ทำให้ insert ซ้ำ (resId เดียวกันถูกเพิ่ม 2 ครั้ง)
+// syncInFlight ทำให้ผู้เรียกที่มาทีหลังรอ promise เดียวกันแทนที่จะรันซ้อนกัน
+let syncInFlight = null;
+function syncEmails() {
+  if (syncInFlight) return syncInFlight;
+  syncInFlight = _syncEmailsImpl().finally(() => { syncInFlight = null; });
+  return syncInFlight;
+}
+async function _syncEmailsImpl() {
   console.log("[" + new Date().toLocaleString("th-TH") + "] ตรวจอีเมลใหม่...");
   try {
     const sheets = getSheets();

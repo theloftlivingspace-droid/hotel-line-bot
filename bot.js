@@ -389,6 +389,13 @@ function buildHotelMessage(checkIns, checkOuts, targetDate) {
 async function runHotelJob() {
   console.log("[" + new Date().toLocaleString("th-TH") + "] เริ่มส่งสรุปแม่บ้าน...");
   try {
+    // ก่อนอ่านชีท: sync อีเมลให้เสร็จก่อน — ป้องกันเคสที่จองเข้ามาช่วง 18:30-19:00
+    // แล้ว cron sync (ทุก 30 นาที) มาชนพอดีตอน 19:00 เดียวกับ cron สรุปนี้
+    // เมื่อก่อน 2 cron ยิงพร้อมกัน อ่านชีทสรุปเสร็จใน ~1 วิ ในขณะที่ sync อีเมล
+    // (IMAP + parse + เขียนชีท) ใช้เวลาหลายวินาที ทำให้จองที่เพิ่งเข้ามาไม่ทันขึ้น
+    // สรุป 19:00 ทั้งที่อีเมลมาถึงก่อน 19:00 แล้ว — syncEmails() มี in-flight lock
+    // เอง ถ้า cron sync กำลังรันอยู่พอดีตัวนี้จะรอ promise เดียวกัน ไม่ชนกัน
+    try { await syncEmails(); } catch (e) { console.error("sync ก่อนสรุปแม่บ้านล้มเหลว (จะใช้ข้อมูลชีทเท่าที่มี): " + e.message); }
     const tomorrow = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
     const rows = await fetchSheetData();
     const { checkIns, checkOuts } = filterByDate(rows, tomorrow);
