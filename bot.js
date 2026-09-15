@@ -364,7 +364,23 @@ function filterByDate(rows, targetDate) {
     if (checkIn === targetDate)  checkIns.push({ room, guest, note: displayNote });
     if (checkOut === targetDate) checkOuts.push({ room, guest, note: displayNote });
   }
-  return { checkIns, checkOuts };
+  // แขกเดิมต่อพักห้องเดิมแบบไม่มีวันเว้น (จองใหม่คนละใบ checkOut ของใบเก่า
+  // ตรงกับ checkIn ของใบใหม่ พอดี) — ไม่ใช่ checkout+checkin จริง แขกไม่ได้ย้ายออก
+  // ห้องไม่ต้องทำความสะอาดใหญ่แบบเช็คเอาท์ปกติ ต้องแยกออกมาเป็น "ต่อพัก"
+  // ไม่งั้นแม่บ้านจะเห็นเป็นเช็คอิน+เช็คเอาท์ห้องเดียวกัน คนเดียวกัน วันเดียวกัน
+  const stayOvers = [];
+  for (let i = checkOuts.length - 1; i >= 0; i--) {
+    const co = checkOuts[i];
+    const j = checkIns.findIndex(ci => ci.room === co.room && ci.guest === co.guest);
+    if (j !== -1) {
+      const ci = checkIns[j];
+      stayOvers.push({ room: co.room, guest: co.guest, note: ci.note || co.note });
+      checkIns.splice(j, 1);
+      checkOuts.splice(i, 1);
+    }
+  }
+  stayOvers.reverse();
+  return { checkIns, checkOuts, stayOvers };
 }
 function formatThaiDate(iso) {
   const M = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
@@ -372,7 +388,8 @@ function formatThaiDate(iso) {
   const d = new Date(iso + "T00:00:00");
   return "วัน" + D[d.getDay()] + "ที่ " + d.getDate() + " " + M[d.getMonth()] + " " + (d.getFullYear() + 543);
 }
-function buildHotelMessage(checkIns, checkOuts, targetDate) {
+function buildHotelMessage(checkIns, checkOuts, targetDate, stayOvers) {
+  stayOvers = stayOvers || [];
   const sep = "─────────────────────────";
   let msg = "\n🏨 รายการห้องพักวันพรุ่งนี้\n📅 " + formatThaiDate(targetDate) + "\n" + sep + "\n";
   if (checkIns.length > 0) {
@@ -383,6 +400,10 @@ function buildHotelMessage(checkIns, checkOuts, targetDate) {
     msg += "\n🚪 เช็คเอาท์ (" + checkOuts.length + " ห้อง)\n";
     checkOuts.forEach(r => { msg += "  🧹 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
   } else { msg += "\n🚪 เช็คเอาท์ : ไม่มี\n"; }
+  if (stayOvers.length > 0) {
+    msg += "\n🔁 ต่อพักห้องเดิม (" + stayOvers.length + " ห้อง) — ไม่ต้องทำความสะอาดใหญ่\n";
+    stayOvers.forEach(r => { msg += "  🏠 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
+  }
   msg += sep + "\n💌 ส่งอัตโนมัติโดยระบบโรงแรม";
   return msg;
 }
@@ -398,8 +419,8 @@ async function runHotelJob() {
     try { await syncEmails(); } catch (e) { console.error("sync ก่อนสรุปแม่บ้านล้มเหลว (จะใช้ข้อมูลชีทเท่าที่มี): " + e.message); }
     const tomorrow = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
     const rows = await fetchSheetData();
-    const { checkIns, checkOuts } = filterByDate(rows, tomorrow);
-    const msg = buildHotelMessage(checkIns, checkOuts, tomorrow);
+    const { checkIns, checkOuts, stayOvers } = filterByDate(rows, tomorrow);
+    const msg = buildHotelMessage(checkIns, checkOuts, tomorrow, stayOvers);
     await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
     console.log("ส่ง LINE สำเร็จ");
     const todayStr = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" }); // YYYY-MM-DD
