@@ -84,7 +84,9 @@ async function linePushWithToken(to, messages, token) {
 }
 
 // แจ้ง admin เมื่อ quota หมด — ใช้ LINE_TOKEN_BACKUP ส่งเพราะ token หลัก quota หมดแล้ว
-async function notifyAdminQuotaExhausted(usage) {
+// originalTo/originalMessages: ผู้รับ+ข้อความเดิมที่ส่งไม่สำเร็จ จะแนบเนื้อหาจริงไปให้แอดมิน
+// ด้วย เพื่อให้แอดมินก็อปไปส่งมือได้ทันทีโดยไม่ต้องมาถามหาเนื้อหาย้อนหลัง
+async function notifyAdminQuotaExhausted(usage, originalTo, originalMessages) {
   if (!ADMIN_USER) return;
   const token = LINE_TOKEN_BACKUP || LINE_TOKEN;
   // ถ้าส่งด้วย backup token ต้องส่งหา ADMIN_USER_2 (userId ของแอดมินฝั่ง OA สำรอง —
@@ -107,6 +109,16 @@ async function notifyAdminQuotaExhausted(usage) {
       }
     }
   ];
+  const forwarded = (originalMessages || [])
+    .filter(m => m && m.type === "text" && m.text)
+    .map(m => m.text)
+    .join("\n\n");
+  if (forwarded) {
+    messages.push({
+      type: "text",
+      text: `📩 ข้อความที่ส่งไม่สำเร็จ (ก็อปไปส่งมือแทนได้เลย):\n\n${forwarded}`,
+    });
+  }
   try {
     await linePushWithToken(target, messages, token);
   } catch (e) {
@@ -140,7 +152,7 @@ async function linePush(to, messages) {
       );
       if (isQuotaErr) {
         console.warn("[LINE] quota หมด (caught from push) — แจ้ง admin");
-        await notifyAdminQuotaExhausted("≥300");
+        await notifyAdminQuotaExhausted("≥300", to, messages);
         return; // ไม่ส่งข้อความนั้น
       }
       throw err;
@@ -183,7 +195,7 @@ async function linePush(to, messages) {
   // quota หมด → แจ้ง admin ไม่ส่ง
   if (remaining <= 0) {
     console.warn("[LINE] quota หมด — แจ้ง admin ไม่ส่งข้อความ");
-    await notifyAdminQuotaExhausted(300);
+    await notifyAdminQuotaExhausted(300, to, messages);
     return;
   }
 
