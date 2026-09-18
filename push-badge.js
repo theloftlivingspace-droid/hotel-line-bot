@@ -17,6 +17,21 @@ const VAPID_SUBJECT     = process.env.VAPID_SUBJECT || "mailto:admin@theloftlivi
 
 const GAS_TODO_URL = "https://script.google.com/macros/s/AKfycbxHuLVbrYnMS2aMEFUppdpKfwfby6Kn4lqD8MDHFwMf7BFIaUlv6NywAzTB-tH-IXs/exec";
 
+// GAS_TODO_URL occasionally returns Google's own HTML error page (starts
+// "<!DOCTYPE") instead of the script's JSON — a transient GAS execution
+// failure (timeout / infra hiccup), not a bug in doGet_ itself, since
+// doGet() there already wraps everything in try/catch and always returns
+// jsonResponse_. Same class of flake as GAS_STYLE_URL in bot.js; port the
+// same 3-attempt/1s-3s-backoff retry instead of accepting badge counts of
+// 0/0 on the first hiccup (which silently under-reports the badge with no
+// admin alert, unlike the LINE-alerted BadgeCheckTrigger.gs backstop).
+const BOOKING_MAX_ATTEMPTS = 3;
+const BOOKING_BACKOFF_MS = [1000, 3000]; // between attempt 1→2 and 2→3
+
+function sleep_(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const SUPABASE_URL = "https://vshrmwfyanwwocftnccu.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZzaHJtd2Z5YW53d29jZnRuY2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NTgyMTksImV4cCI6MjA5MzUzNDIxOX0.H8zKjDtCnRxzLcV2k-NsSIqJe0k_JkS-_zTtBaHCaGo";
 
@@ -69,19 +84,30 @@ async function saveSubscriptions(subs) {
 
 // ─── Data sources ──────────────────────────────────────────────────────────
 async function getBookingInvoiceCounts() {
-  try {
-    const res = await fetch(`${GAS_TODO_URL}?action=getData`, { redirect: "follow" });
-    const j = await res.json();
-    const d = j.data ?? j;
-    const booking = d.booking ?? d.bookings ?? [];
-    const invoice = d.invoice ?? d.ledger ?? [];
-    const bookingCount = Array.isArray(booking) ? booking.filter((x) => !x.done).length : 0;
-    const invoiceCount = Array.isArray(invoice) ? invoice.filter((x) => !x.done).length : 0;
-    return { bookingCount, invoiceCount };
-  } catch (e) {
-    console.error("[push-badge] booking/invoice fetch error:", e.message);
-    return { bookingCount: 0, invoiceCount: 0 };
+  for (let attempt = 1; attempt <= BOOKING_MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(`${GAS_TODO_URL}?action=getData`, { redirect: "follow" });
+      const text = await res.text();
+      let j;
+      try {
+        j = JSON.parse(text);
+      } catch (_) {
+        throw new Error(`non-JSON response (http ${res.status}): ${text.slice(0, 120)}`);
+      }
+      const d = j.data ?? j;
+      const booking = d.booking ?? d.bookings ?? [];
+      const invoice = d.invoice ?? d.ledger ?? [];
+      const bookingCount = Array.isArray(booking) ? booking.filter((x) => !x.done).length : 0;
+      const invoiceCount = Array.isArray(invoice) ? invoice.filter((x) => !x.done).length : 0;
+      if (attempt > 1) console.log(`[push-badge] booking/invoice fetch succeeded on attempt ${attempt}`);
+      return { bookingCount, invoiceCount };
+    } catch (e) {
+      console.error(`[push-badge] booking/invoice fetch attempt ${attempt}/${BOOKING_MAX_ATTEMPTS} error:`, e.message);
+      if (attempt < BOOKING_MAX_ATTEMPTS) await sleep_(BOOKING_BACKOFF_MS[attempt - 1]);
+    }
   }
+  console.error(`[push-badge] booking/invoice fetch FAILED after ${BOOKING_MAX_ATTEMPTS} attempts — badge will undercount until next run.`);
+  return { bookingCount: 0, invoiceCount: 0 };
 }
 
 async function getLowStockCount() {
