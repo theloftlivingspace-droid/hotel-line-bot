@@ -444,7 +444,7 @@ async function runHotelJob() {
 }
 
 // ─── Hotel: reply เลขห้องจากกลุ่ม ──────────────────────────────
-const GAS_STYLE_URL = "https://script.google.com/macros/s/AKfycbxwlKBtlw74Z52ryAK2SNV_3mNXhFzk3IoANSOqNBhfENUdO3QhfQUKovZ6_THXfeE/exec";
+const GAS_STYLE_URL = "https://script.google.com/macros/s/AKfycbxATx-qQyGBbDYhL--m7wid6PhNGecvDzAEt_9rVdix_xKZO1N3JePp7wOsbElDu0s/exec";
 // bot.js เขียนลง Sheet1 ตรงๆ ผ่าน Sheets API (ไม่ผ่าน GAS webapp เลย) —
 // เพราะงั้นต้องยิง styleSheet1 เองหลังเขียนทุกครั้ง เหมือนที่ email-sync.js ทำ
 // ไม่งั้นแถวที่ handleAdminReply ใส่เลขห้องจะไม่ถูก sort/format ตาม

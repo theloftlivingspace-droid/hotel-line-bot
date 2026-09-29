@@ -20,7 +20,7 @@ const LINE_GROUP   = process.env.LINE_GROUP_ID;
 const ADMIN_ID     = process.env.ADMIN_USER_ID; // ไลน์ส่วนตัวแอดมิน
 const SHEET_ID     = process.env.GOOGLE_SHEET_ID;
 const SHEET_NAME   = process.env.GOOGLE_SHEET_NAME || "Sheet1";
-const GAS_STYLE_URL = "https://script.google.com/macros/s/AKfycbxwlKBtlw74Z52ryAK2SNV_3mNXhFzk3IoANSOqNBhfENUdO3QhfQUKovZ6_THXfeE/exec";
+const GAS_STYLE_URL = "https://script.google.com/macros/s/AKfycbxATx-qQyGBbDYhL--m7wid6PhNGecvDzAEt_9rVdix_xKZO1N3JePp7wOsbElDu0s/exec";
 
 // ─────────────────────────────────────────────
 // Room type map
