@@ -10,7 +10,7 @@
  *   - Follow → ลงทะเบียนห้อง (Redis/file)
  *   - Rich Menu: ตรวจค่าเช่า, ส่งสลิป, ระเบียบ, เอกสาร, ติดต่อ
  *   - รับสลิปรูป → verify AI → forward รูปไปกลุ่มแม่บ้าน
- *   - Cron ส่งค่าเช่าวันที่ 5 และ 8-15
+ *   - Cron ส่งค่าเช่าวันที่ 8-15
  *
  * Webhook รับทั้ง:
  *   - source.type === "group"  → hotel (reply เลขห้อง)
@@ -925,7 +925,7 @@ async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
   const now = new Date();
   const bangkokDate = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
   const day = forceDay || bangkokDate.getDate();
-  if (!isTest && !onlyRoom && day !== 5 && (day < 8 || day > 15)) return;
+  if (!isTest && !onlyRoom && (day < 8 || day > 15)) return;
   try {
     const rooms = await loadRooms(), payments = await loadPayments();
     // ไม่ผูกกับเดือนปฏิทินจริง — ใช้สถานะ confirmed ล้วนๆ (archive เกิดตอนโหลดบิลใหม่เท่านั้น)
@@ -940,9 +940,7 @@ async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
     for (const room of unpaidRooms) {
       const amount = Number(room.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 });
       let msg = "";
-      if (day === 5) {
-        msg = `⚠️ แจ้งเตือนค่าเช่าห้อง ${room.roomNumber} ค่ะ\n\nยอดค่าเช่าเดือนนี้: ${amount} บาท\nกำหนดชำระ: วันที่ 7 ของเดือนนี้\n\n⏰ กรุณาชำระภายในวันที่ 7 ค่ะ\nหากเกินกำหนดจะมีค่าปรับ 100 บาท/วัน\n\nโอนผ่านบัญชีธนาคาร:\n• SCB 353-2-05292-9\n• KBank 799-2-39682-9\nชื่อบัญชี: ณัฐวุฒิ จงจิตตาภิบาล\n\nชำระแล้วกรุณาส่งสลิปในแชทนี้ด้วยนะคะ 🙏`;
-      } else if (day >= 8 && day <= 15) {
+      if (day >= 8 && day <= 15) {
         const overdueDays = day - 7, fine = overdueDays * 100;
         const total = (Number(room.amount) + fine).toLocaleString("th-TH", { minimumFractionDigits: 2 });
         const fineStr = fine.toLocaleString("th-TH");
