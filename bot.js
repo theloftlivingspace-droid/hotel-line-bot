@@ -750,7 +750,7 @@ async function handleImageMessage(event) {
   const users = await loadUsers(), rooms = await loadRooms();
   const user = users[userId];
   const myRooms = Object.values(rooms).filter(r => r.lineUserId === userId);
-  if (!myRooms.length) { await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนส่งสลิปค่ะ" }]); return; }
+  if (!myRooms.length) { console.warn(`[Slip] ไม่พบห้องที่ผูกกับ userId=${userId} (รูป messageId=${event.message?.id})`); await lineReply(event.replyToken, [{ type: "text", text: "กรุณาลงทะเบียนห้องก่อนส่งสลิปค่ะ" }]); return; }
   if (user && !user.roomNumber) { users[userId].roomNumber = myRooms[0].roomNumber; users[userId].updatedAt = new Date().toISOString(); await saveUsers(users); }
   const roomList = myRooms.map(r => r.roomNumber).join(", ");
   const totalAmount = myRooms.reduce((s, r) => s + Number(r.amount), 0);
@@ -1072,9 +1072,10 @@ app.post("/webhook", (req, res) => {
   let body = "";
   req.on("data", c => { body += c; });
   req.on("end", () => {
-    if (!verifySignature(body, req.headers["x-line-signature"])) { res.status(401).send("Invalid signature"); return; }
+    if (!verifySignature(body, req.headers["x-line-signature"])) { console.warn(`[Webhook] 401 invalid signature bodyLen=${body.length}`); res.status(401).send("Invalid signature"); return; }
     res.status(200).send("OK");
-    let data; try { data = JSON.parse(body); } catch { return; }
+    let data; try { data = JSON.parse(body); } catch { console.warn("[Webhook] JSON parse failed"); return; }
+    console.log(`[Webhook] received events=${(data.events || []).length} types=${(data.events || []).map(e => e.type + ":" + (e.message?.type || "-")).join(",") || "-"}`);
     for (const event of (data.events || [])) {
       channelContext.run({ token: LINE_TOKEN }, async () => {
         try {
