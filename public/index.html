@@ -822,7 +822,7 @@ async function loadPayments(){
               ${fineNote}
               ${match
                 ? `<div style="font-size:11px;color:#15803d;margin-top:3px">✓ ยอดตรงกัน</div>`
-                : `<div style="font-size:11px;color:#b91c1c;margin-top:3px">⚠ ยอดไม่ตรง</div>`}
+                : (p.status==="confirmed" ? "" : `<div style="font-size:11px;color:#b91c1c;margin-top:3px">⚠ ยอดไม่ตรง</div>`)}
             </div>`;
             })()}
             <!-- ข้อมูลเพิ่มเติม -->
