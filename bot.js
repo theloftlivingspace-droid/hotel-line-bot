@@ -1642,8 +1642,8 @@ try {
 } catch (e) {
   console.error(`[CRON] FAILED to register hotel job: ${e.message}`);
 }
-// Rent reminder: วันที่ 5 และ 8-15 เวลา 7:00 น.
-cron.schedule("0 7 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });
+// Rent reminder: วันที่ 8-15 เวลา 00:05 น.
+cron.schedule("5 0 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });
 // ต้นเดือน 09:00 → เช็ค Redis flag ถ้าใช้ OA สำรองอยู่ แจ้ง admin ให้กลับ OA หลัก
 cron.schedule("0 9 1 * *", async () => {
   try {
