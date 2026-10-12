@@ -12,6 +12,10 @@ const { simpleParser } = require("mailparser");
 const { google }       = require("googleapis");
 const axios            = require("axios");
 const cron             = require("node-cron");
+const {
+  buildGuestIndex, lookupGuests, isGuestOnlyEmail, guestsLine, guestColIndexes, guestsFromRow,
+  writeGuestsToRow, writeGuestsToRows,
+} = require("./guests");
 
 const GMAIL_USER   = process.env.GMAIL_USER;
 const GMAIL_PASS   = process.env.GMAIL_APP_PASSWORD;
@@ -198,7 +202,7 @@ async function addPendingRow(sheets, res, bookingDate) {
   // A=รอยืนยัน B=ชื่อแขก C=เช็คอิน D=เช็คเอาท์ E=channel F=resId G=note H=วันจอง
   // bookingDate ควรมาจาก email.date (วันที่ LH ส่ง New Reservation email = วันที่แขกจองจริง)
   const bDate = bookingDate || new Date().toISOString().slice(0, 10);
-  await sheets.spreadsheets.values.append({
+  const resp = await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
     range: SHEET_NAME + "!A:H",
     valueInputOption: "RAW",
@@ -207,6 +211,38 @@ async function addPendingRow(sheets, res, bookingDate) {
       values: [["รอยืนยัน", res.guest, res.checkIn, res.checkOut, res.channel, res.resId, res.note, bDate]],
     },
   });
+  // จำนวนแขก (ผู้ใหญ่/เด็ก) → คอลัมน์ Adults/Children/Guests ของแถวที่เพิ่งเพิ่ม
+  // ล้มเหลวได้โดยไม่กระทบการจอง: รอบ sync ถัดไป fillMissingGuests() จะเติมให้
+  if (!res.guests) {
+    console.log("guests: ไม่พบจำนวนแขกในอีเมล — " + res.resId + " (" + res.channel + ") จะแสดง \"ไม่ระบุ\"");
+    return;
+  }
+  try {
+    const rm = String(((resp.data || {}).updates || {}).updatedRange || "").match(/!A(\d+):/);
+    if (rm) await writeGuestsToRow(sheets, SHEET_ID, SHEET_NAME, parseInt(rm[1], 10), res.guests);
+  } catch (e) {
+    console.error("guests: เขียนจำนวนแขกลงชีตไม่สำเร็จ (" + res.resId + "): " + e.message);
+  }
+}
+
+// เติมจำนวนแขกให้แถวที่ยังว่าง — ใช้ได้ทั้งกรณีอีเมลคู่มาช้ากว่าอีเมลจอง และ backfill booking เดิมที่ยังอยู่ในช่วง 4 เดือน
+async function fillMissingGuests(sheets, parsed) {
+  const withG = parsed.filter((p) => p.guests);
+  if (!withG.length) return 0;
+  const got = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:Z" });
+  const rows = got.data.values || [];
+  if (rows.length < 2) return 0;
+  const header = rows[0].map((x) => String(x || "").trim());
+  const resCol = header.indexOf("ResId") >= 0 ? header.indexOf("ResId") : 5;
+  const gi = guestColIndexes(header);
+  const byRes = new Map(withG.map((p) => [p.resId, p.guests]));
+  const todo = [];
+  for (let i = 1; i < rows.length; i++) {
+    const g = byRes.get(String(rows[i][resCol] || "").trim());
+    if (!g || guestsFromRow(rows[i], gi)) continue; // ไม่มีข้อมูล หรือชีตมีค่าอยู่แล้ว (รวมที่แอดมินแก้เอง) → ไม่ทับ
+    todo.push({ row: i + 1, g });
+  }
+  return writeGuestsToRows(sheets, SHEET_ID, SHEET_NAME, todo);
 }
 
 // ─────────────────────────────────────────────
@@ -252,7 +288,7 @@ async function getAvailableRooms(sheets, candidateRooms, newCheckIn, newCheckOut
 async function updateRoomInSheet(sheets, resId, roomNumber) {
   const result = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:G",
+    range: SHEET_NAME + "!A:Z",
   });
   const rows = result.data.values || [];
   for (let i = 1; i < rows.length; i++) {
@@ -263,7 +299,7 @@ async function updateRoomInSheet(sheets, resId, roomNumber) {
         valueInputOption: "RAW",
         requestBody: { values: [[roomNumber]] },
       });
-      return { guest: rows[i][1], checkIn: rows[i][2], note: rows[i][6] || "" };
+      return { guest: rows[i][1], checkIn: rows[i][2], note: rows[i][6] || "", guests: guestsFromRow(rows[i], guestColIndexes(rows[0])) };
     }
   }
   return null;
@@ -391,6 +427,7 @@ async function sendNewBookingToAdmin(res, roomLabel, status = null, availableRoo
   const msg =
     "\n\u{1F514} จองใหม่!\n" + sep + "\n" +
     "\u{1F464} " + res.guest + "\n" +
+    guestsLine(res.guests) + "\n" +
     roomLine + "\n" +
     "\u{1F4C5} " + thaiDate(res.checkIn) + " \u2192 " + thaiDate(res.checkOut) + "\n" +
     "\u{1F4CC} " + res.channel +
@@ -410,13 +447,14 @@ async function sendConfirmToAdmin(resId, roomNumber, guest) {
   await linePush(ADMIN_ID, "\u2705 อัปเดตแล้ว!\n" + guest + "\nห้อง " + roomNumber + " (" + resId + ")");
 }
 
-async function sendUrgentToGroup(roomNumber, guest, checkIn, note) {
+async function sendUrgentToGroup(roomNumber, guest, checkIn, note, guests) {
   const depositLine = note ? "\n\u{1F4B0} " + note : "";
   const sep = "\u2500".repeat(25);
   const dayLabel = checkIn === todayBKK() ? "เช็คอินวันนี้" : "เช็คอินพรุ่งนี้";
   const msg =
     "\n\u{1F6A8} จองใหม่! " + dayLabel + "\n" + sep + "\n" +
     "\u{1F511} ห้อง " + roomNumber + "  \u2014  " + guest + "\n" +
+    guestsLine(guests) + "\n" +
     "\u{1F4C5} เช็คอิน " + thaiDate(checkIn) +
     depositLine + "\n" + sep;
   await linePush(LINE_GROUP, msg);
@@ -778,15 +816,16 @@ async function handleLineReply(messageText, sourceId) {
     const sheets = getSheets();
     const result = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: SHEET_NAME + "!A:G",
+      range: SHEET_NAME + "!A:Z",
     });
     const rows = result.data.values || [];
+    const guestIdx = guestColIndexes(rows[0]);
     let found = null;
     for (let i = rows.length - 1; i >= 1; i--) {
       const rowGuest = (rows[i][1] || "").trim().toLowerCase();
       const rowStatus = (rows[i][0] || "").trim();
       if (rowGuest.includes(guestName) && rowStatus !== "ยกเลิก") {
-        found = { rowIdx: i, guest: rows[i][1], room: rows[i][0], resId: rows[i][5] };
+        found = { rowIdx: i, guest: rows[i][1], room: rows[i][0], resId: rows[i][5], guests: guestsFromRow(rows[i], guestIdx) };
         break;
       }
     }
@@ -809,6 +848,7 @@ async function handleLineReply(messageText, sourceId) {
     await linePush(ADMIN_ID,
       "\u2705 ยกเลิกแล้ว\n" +
       "\u{1F464} " + found.guest + "\n" +
+      guestsLine(found.guests) + "\n" +
       "\u{1F3E8} ห้อง " + (found.room || "รอยืนยัน") + "\n" +
       "\u{1F4CB} " + (found.resId || "-")
     );
@@ -910,7 +950,7 @@ async function handleLineReply(messageText, sourceId) {
     if (info.checkIn === today || (info.checkIn === tomorrow && hour >= 19)) {
       // ห้อง 363 (Mycondo) ไม่ส่งเข้ากลุ่มแม่บ้าน
       if (!NO_MAID_ROOMS.has(String(roomNumber))) {
-        await sendUrgentToGroup(roomNumber, info.guest, info.checkIn, info.note);
+        await sendUrgentToGroup(roomNumber, info.guest, info.checkIn, info.note, info.guests);
       }
     }
     await triggerStyleSheet1();
@@ -954,6 +994,7 @@ function fetchEmails(since) {
 
         const baseLH  = [["SINCE", since], ["FROM", "no-reply@app.littlehotelier.com"]];
         const baseABB = [["SINCE", since], ["FROM", "automated@airbnb.com"]];
+        const baseTrip = [["SINCE", since], ["FROM", "noreply_htl@trip.com"]]; // ใช้ดึงจำนวนแขกเท่านั้น
 
         // search EN and TH subjects in parallel (both over same open connection sequentially)
         const search = (criteria) => new Promise((res, rej) =>
@@ -961,16 +1002,17 @@ function fetchEmails(since) {
         );
 
         try {
-          const [uidsEn, uidsTh, uidsAbb, uidsDetail] = await Promise.all([
+          const [uidsEn, uidsTh, uidsAbb, uidsDetail, uidsTrip] = await Promise.all([
             search([...baseLH,  ["SUBJECT", "New Reservation"]]),
             search([...baseLH,  ["SUBJECT", "การจองใหม่"]]),
             search([...baseABB, ["SUBJECT", "Reservation confirmed"]]),
             search([...baseLH,  ["SUBJECT", "Booking for #"]]), // Expedia/EPS detail-table template
+            search([...baseTrip, ["SUBJECT", "accepted"]]),     // Trip.com: "Booking no. #... accepted" (มี Guests (estimated))
           ]);
 
           // merge + deduplicate uid lists
-          const allUids = [...new Set([...uidsEn, ...uidsTh, ...uidsAbb, ...uidsDetail])];
-          console.log(`พบอีเมล: LH-EN=${uidsEn.length} LH-TH=${uidsTh.length} ABB363=${uidsAbb.length} Detail=${uidsDetail.length} รวม=${allUids.length} ฉบับ`);
+          const allUids = [...new Set([...uidsEn, ...uidsTh, ...uidsAbb, ...uidsDetail, ...uidsTrip])];
+          console.log(`พบอีเมล: LH-EN=${uidsEn.length} LH-TH=${uidsTh.length} ABB363=${uidsAbb.length} Detail=${uidsDetail.length} Trip=${uidsTrip.length} รวม=${allUids.length} ฉบับ`);
 
           if (allUids.length === 0) { console.log("ไม่พบอีเมลใหม่"); imap.end(); return resolve([]); }
 
@@ -1032,11 +1074,19 @@ async function _syncEmailsImpl() {
     since.setMonth(since.getMonth() - 4);
     const emails = await fetchEmails(since);
 
+    // จำนวนแขกอยู่ในอีเมลคู่ของแต่ละช่องทาง (Airbnb / Booking.com / Trip.com) ไม่ใช่ในอีเมลสรุปของ LH
+    // → สร้าง index จากอีเมลทั้งหมดที่ดึงมา แล้วจับคู่ด้วย ชื่อแขก + วันเช็คอิน
+    const guestIndex = buildGuestIndex(emails);
+    const parsedForGuests = [];
+
     let newCount = 0;
     const heldRooms = new Set(); // ห้องที่ assign ไปแล้วในรอบนี้ (กันชนกันเมื่อมีหลาย booking พร้อมกัน)
     for (const email of emails) {
+      if (isGuestOnlyEmail(email)) continue; // อีเมล Trip.com ใช้ดึงจำนวนแขกอย่างเดียว ไม่ใช่อีเมลจอง
       const res = parseEmail(email);
       if (!res) continue;
+      res.guests = lookupGuests(guestIndex, res);
+      parsedForGuests.push({ resId: res.resId, guests: res.guests });
       if (notifiedIds.has(res.resId)) {
         // resId ชนกัน (เช่น แขกยกเลิกแล้วจองใหม่ในวันเดียวกัน guest+emailDate เดิม
         // ทำให้สูตร resId ได้ค่าเดิม) — เช็คว่าเป็น booking เดียวกันจริงหรือคนละอันที่ชนกัน
@@ -1093,7 +1143,7 @@ async function _syncEmailsImpl() {
         if (res.checkIn === today || (res.checkIn === tomorrow && hour >= 19)) {
           // ห้อง 363 (Mycondo) ไม่ส่งเข้ากลุ่มแม่บ้าน
           if (!NO_MAID_ROOMS.has(String(assignedRoom))) {
-            await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note);
+            await sendUrgentToGroup(roomLabel, res.guest, res.checkIn, res.note, res.guests);
           }
         }
         await sendNewBookingToAdmin(res, roomLabel);
@@ -1122,6 +1172,12 @@ async function _syncEmailsImpl() {
       newCount++;
     }
     console.log("ตรวจเสร็จ (ใหม่ " + newCount + " รายการ)");
+    try {
+      const filled = await fillMissingGuests(sheets, parsedForGuests);
+      if (filled > 0) console.log("guests: เติมจำนวนแขกให้ " + filled + " แถวที่ยังว่าง");
+    } catch (e) {
+      console.error("guests: fillMissingGuests ล้มเหลว (ไม่กระทบการจอง): " + e.message);
+    }
     if (newCount > 0) await triggerStyleSheet1();
   } catch (err) {
     console.error("sync error: " + err.message);
