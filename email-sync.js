@@ -439,6 +439,18 @@ function extractText(email) {
   return "";
 }
 
+// ถ้าอีเมลไม่ระบุปี isoDate() จะเติมปีปัจจุบันให้ทั้งสองวัน — การจองข้ามปี (เช่น 31 Oct -> 31 Jan)
+// จะได้ checkOut ก่อน checkIn. ถ้าเกิดแบบนั้นให้ดัน checkOut ไปปีถัดไป
+function fixYearRollover(checkIn, checkOut) {
+  if (checkIn && checkOut && checkOut < checkIn) {
+    const y = parseInt(checkOut.slice(0, 4), 10) + 1;
+    const fixed = y + checkOut.slice(4);
+    console.log("🗓️ fixYearRollover: checkOut " + checkOut + " < checkIn " + checkIn + " -> " + fixed);
+    return fixed;
+  }
+  return checkOut;
+}
+
 function isoDate(str) {
   const months = {
     // English full
@@ -561,6 +573,8 @@ function parseAirbnbDirectEmail(email) {
     checkOut = null;
   }
 
+  checkOut = fixYearRollover(checkIn, checkOut);
+
   if (!guest || !checkIn || !checkOut) {
     console.log("❌ parseAirbnbDirect FAIL: listing=" + listingId + " guest=" + guest + " in=" + checkIn + " out=" + checkOut);
     return null;
@@ -660,9 +674,11 @@ function parseExpediaDetailEmail(email) {
 
   const guest    = guestMatch[1].trim();
   const checkIn  = isoDate(inMatch[1].replace(/-/g, " "));
-  const checkOut = isoDate(outMatch[1].replace(/-/g, " "));
+  let checkOut = isoDate(outMatch[1].replace(/-/g, " "));
   const roomName = roomMatch ? roomMatch[1].trim() : "";
   const channel  = normalizeChannel("", subject, body); // subject มีคำว่า "Expedia" อยู่แล้ว
+
+  checkOut = fixYearRollover(checkIn, checkOut);
 
   if (!checkIn || !checkOut) {
     console.log("parseExpediaDetail FAIL (date): in=" + checkIn + " out=" + checkOut);
@@ -736,6 +752,8 @@ function parseEmail(email) {
     console.log("parse FAIL body(200):", cleaned.substring(0, 200));
     return null;
   }
+
+  checkOut = fixYearRollover(checkIn, checkOut);
 
   if (!checkIn || !checkOut) {
     console.log("parse FAIL (date): in=" + checkIn + " out=" + checkOut);
