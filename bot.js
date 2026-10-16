@@ -24,6 +24,7 @@ const path    = require("path");
 const fetch   = require("node-fetch");
 const cron    = require("node-cron");
 const { google } = require("googleapis");
+const { guestsLine, guestColIndexes, guestsFromRow, nameKey } = require("./guests");
 const { AsyncLocalStorage } = require("async_hooks");
 
 // เก็บ token ของ OA ที่ "เป็นเจ้าของ" event ปัจจุบันไว้ตาม async context ของ request นั้นๆ
@@ -321,7 +322,7 @@ async function fetchSheetData() {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: SHEET_NAME + "!A:G",
+    range: SHEET_NAME + "!A:Z",
   });
   const rows = res.data.values || [];
   console.log("ดึงข้อมูลจาก Google Sheets: " + (rows.length - 1) + " แถว");
@@ -346,6 +347,7 @@ function normalizeDate(str) {
 function filterByDate(rows, targetDate) {
   const checkIns = [];
   const checkOuts = [];
+  const guestIdx = guestColIndexes(rows[0]); // คอลัมน์ Adults / Children / Guests (ตามชื่อหัวตาราง)
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row || row.length < 4) continue;
@@ -373,8 +375,9 @@ function filterByDate(rows, targetDate) {
     if (/cancel|ยกเลิก/i.test(room)) continue;
     // รายงานอัตโนมัตินี้แสดงเฉพาะ note มัดจำที่ระบบสร้างเอง ไม่แสดง note ที่พิมพ์เองจาก admin dashboard
     const displayNote = (note && note.indexOf("มัดจำ") !== -1) ? note : "";
-    if (checkIn === targetDate)  checkIns.push({ room, guest, note: displayNote });
-    if (checkOut === targetDate) checkOuts.push({ room, guest, note: displayNote });
+    const guests = guestsFromRow(row, guestIdx); // null = ไม่มีข้อมูล → แสดง "ไม่ระบุ"
+    if (checkIn === targetDate)  checkIns.push({ room, guest, note: displayNote, guests });
+    if (checkOut === targetDate) checkOuts.push({ room, guest, note: displayNote, guests });
   }
   // แขกเดิมต่อพักห้องเดิมแบบไม่มีวันเว้น (จองใหม่คนละใบ checkOut ของใบเก่า
   // ตรงกับ checkIn ของใบใหม่ พอดี) — ไม่ใช่ checkout+checkin จริง แขกไม่ได้ย้ายออก
@@ -386,7 +389,7 @@ function filterByDate(rows, targetDate) {
     const j = checkIns.findIndex(ci => ci.room === co.room && ci.guest === co.guest);
     if (j !== -1) {
       const ci = checkIns[j];
-      stayOvers.push({ room: co.room, guest: co.guest, note: ci.note || co.note });
+      stayOvers.push({ room: co.room, guest: co.guest, note: ci.note || co.note, guests: ci.guests || co.guests });
       checkIns.splice(j, 1);
       checkOuts.splice(i, 1);
     }
@@ -400,21 +403,25 @@ function formatThaiDate(iso) {
   const d = new Date(iso + "T00:00:00");
   return "วัน" + D[d.getDay()] + "ที่ " + d.getDate() + " " + M[d.getMonth()] + " " + (d.getFullYear() + 543);
 }
+// บรรทัดย่อยใต้แต่ละห้องในสรุปแม่บ้าน: จำนวนแขก (ผู้ใหญ่/เด็ก) + note มัดจำ (ถ้ามี)
+function guestNoteLine(r) {
+  return "     " + guestsLine(r.guests) + (r.note ? "  📝 " + r.note : "") + "\n";
+}
 function buildHotelMessage(checkIns, checkOuts, targetDate, stayOvers) {
   stayOvers = stayOvers || [];
   const sep = "─────────────────────────";
   let msg = "\n🏨 รายการห้องพักวันพรุ่งนี้\n📅 " + formatThaiDate(targetDate) + "\n" + sep + "\n";
   if (checkIns.length > 0) {
     msg += "\n✅ เช็คอิน (" + checkIns.length + " ห้อง)\n";
-    checkIns.forEach(r => { msg += "  🔑 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
+    checkIns.forEach(r => { msg += "  🔑 ห้อง " + r.room + "  —  " + r.guest + "\n" + guestNoteLine(r); });
   } else { msg += "\n✅ เช็คอิน : ไม่มี\n"; }
   if (checkOuts.length > 0) {
     msg += "\n🚪 เช็คเอาท์ (" + checkOuts.length + " ห้อง)\n";
-    checkOuts.forEach(r => { msg += "  🧹 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
+    checkOuts.forEach(r => { msg += "  🧹 ห้อง " + r.room + "  —  " + r.guest + "\n" + guestNoteLine(r); });
   } else { msg += "\n🚪 เช็คเอาท์ : ไม่มี\n"; }
   if (stayOvers.length > 0) {
     msg += "\n🔁 ต่อพักห้องเดิม (" + stayOvers.length + " ห้อง) — ไม่ต้องทำความสะอาดใหญ่\n";
-    stayOvers.forEach(r => { msg += "  🏠 ห้อง " + r.room + "  —  " + r.guest + (r.note ? "  📝 " + r.note : "") + "\n"; });
+    stayOvers.forEach(r => { msg += "  🏠 ห้อง " + r.room + "  —  " + r.guest + "\n" + guestNoteLine(r); });
   }
   msg += sep + "\n💌 ส่งอัตโนมัติโดยระบบโรงแรม";
   return msg;
@@ -1383,6 +1390,42 @@ app.post("/api/send-msg-one", adminAuth, async (req, res) => {
   try { await linePush(room.lineUserId, [{ type: "text", text: message }]); res.json({ ok: true }); }
   catch (e) { res.json({ ok: false, error: e.message }); }
 });
+// ── จำนวนแขกสำหรับข้อความที่ยิงจากแดชบอร์ด/GAS ───────────────────────
+// ผู้เรียกส่ง guests มาเองได้ ({adults, children, total} หรือตัวเลข) ไม่งั้นค้นจาก Sheet1
+// ด้วย resId หรือ ชื่อแขก+วันเช็คอิน — ไม่เจอ → null (แสดง "ไม่ระบุ")
+async function resolveGuests(body) {
+  const g = body && body.guests;
+  if (g && typeof g === "object") {
+    const a = Number(g.adults) || 0, c = Number(g.children) || 0;
+    const t = Number(g.total) || a + c;
+    if (t > 0) return { adults: a, children: c, total: t };
+  } else if (Number(g) > 0) {
+    return { adults: Number(g), children: 0, total: Number(g) };
+  }
+  try {
+    const rows = await fetchSheetData();
+    if (rows.length < 2) return null;
+    const header = rows[0].map(x => String(x || "").trim());
+    const idx = guestColIndexes(header);
+    if (idx.adults < 0 && idx.children < 0 && idx.total < 0) return null;
+    const resCol = header.indexOf("ResId") >= 0 ? header.indexOf("ResId") : 5;
+    const wantRes = String(body.resId || "").trim();
+    const wantName = nameKey(body.guest);
+    const wantIn = normalizeDate(String(body.checkin || ""));
+    let best = null;
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const row = rows[i];
+      if (wantRes && String(row[resCol] || "").trim() === wantRes) return guestsFromRow(row, idx);
+      if (!best && wantName && nameKey(row[1]) === wantName && wantIn && normalizeDate(String(row[2] || "")) === wantIn) {
+        best = guestsFromRow(row, idx);
+      }
+    }
+    return best;
+  } catch (e) {
+    console.error("resolveGuests error: " + e.message);
+    return null;
+  }
+}
 // ── Send note to maid LINE group ──────────────────────────────────────
 app.post("/api/send-maid-note", adminAuth, async (req, res) => {
   const { room, guest, checkin, checkout, note } = req.body;
@@ -1390,6 +1433,7 @@ app.post("/api/send-maid-note", adminAuth, async (req, res) => {
   const lines = [];
   if (room)    lines.push(`🏠 ห้อง ${room}`);
   if (guest)   lines.push(`👤 ${guest}`);
+  if (guest)   lines.push(guestsLine(await resolveGuests(req.body)));
   lines.push(`📝 ${note}`);
   const msg = lines.join("\n");
   try {
@@ -1444,6 +1488,7 @@ app.post("/api/cancel-notify", adminAuth, async (req, res) => {
     "🚫 ยกเลิกการจอง",
     `🏠 ห้อง ${room}`,
     `👤 ${guest}`,
+    guestsLine(await resolveGuests(req.body)),
     `📅 ${checkin} → ${checkout}`,
   ].join("\n");
   try {
@@ -1486,6 +1531,7 @@ app.post("/api/checkout-notify", adminAuth, async (req, res) => {
     "🧳 Checkout แล้ว",
     `🏠 ห้อง ${room}`,
     `👤 ${guest}`,
+    guestsLine(await resolveGuests(req.body)),
     `📅 ${checkin} → ${checkout}`,
   ].join("\n");
   try {
@@ -1510,11 +1556,13 @@ app.post("/api/room-move-notify", adminAuth, async (req, res) => {
     return res.json({ ok: true, skipped: true, reason: "not yet announced to maid group" });
   }
 
+  const guestsText = guestsLine(await resolveGuests(req.body));
   const msg = splitBooking
     ? [
         "📍 ย้ายห้องด่วน (เช็คอินแล้ว)",
         resId ? `ResId: ${resId}` : null,
         `👤 ${guest}`,
+        guestsText,
         `🧳 เช็คเอาท์ห้อง ${oldRoom} วันที่ ${effectiveDate}`,
         `🏠 เช็คอินห้อง ${newRoom} วันเดียวกัน${segmentBResId ? ` (ResId ${segmentBResId})` : ""}`,
       ].filter(Boolean).join("\n")
@@ -1522,6 +1570,7 @@ app.post("/api/room-move-notify", adminAuth, async (req, res) => {
         "📍 แก้ไขห้องด่วน",
         resId ? `ResId: ${resId}` : null,
         `👤 ${guest}`,
+        guestsText,
         `🏠 ห้อง ${oldRoom} → ${newRoom}`,
       ].filter(Boolean).join("\n");
 
