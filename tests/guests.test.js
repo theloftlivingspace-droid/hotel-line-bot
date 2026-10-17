@@ -51,4 +51,12 @@ assert.deepStrictEqual(g.guestsFromRow(["","","","","","","","","","2","1","3"],
 assert.strictEqual(g.guestsFromRow(["","","","","","","","","x"], ix), null);
 assert.deepStrictEqual(g.guestsFromRow(["","","","","","","","","","","","4"], ix), { adults: 0, children: 0, total: 4 });
 assert.strictEqual(g.colLetter(0), "A"); assert.strictEqual(g.colLetter(25), "Z"); assert.strictEqual(g.colLetter(26), "AA");
+// สำเนียง: precomposed / decomposed / ตัดสำเนียง / "นามสกุล, ชื่อ" ต้องจับคู่ได้ทั้งหมด
+{
+  const pre = "Andrius Rudavi\u010dius", dec = "Andrius Rudavic\u030cius";
+  for (const [subj, guest] of [[pre, pre], [dec, pre], [pre, dec], ["Andrius Rudavicius", pre], [pre, "Rudavi\u010dius, Andrius"]]) {
+    const ix = g.buildGuestIndex([mkEmail("automated@airbnb.com", "Reservation confirmed - " + subj + " arrives Oct 16", "GUESTS\n\n1 adult\n\nMORE DETAILS")]);
+    assert.deepStrictEqual(g.lookupGuests(ix, { guest, checkIn: "2026-10-16" }), { adults: 1, children: 0 });
+  }
+}
 console.log("ALL OK");
