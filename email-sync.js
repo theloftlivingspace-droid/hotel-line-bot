@@ -13,7 +13,7 @@ const { google }       = require("googleapis");
 const axios            = require("axios");
 const cron             = require("node-cron");
 const {
-  buildGuestIndex, lookupGuests, isGuestOnlyEmail, guestsLine, guestColIndexes, guestsFromRow,
+  buildGuestIndex, lookupGuests, isGuestOnlyEmail, guestsLine, planGuestFills, guestColIndexes, guestsFromRow,
   writeGuestsToRow, writeGuestsToRows,
 } = require("./guests");
 
@@ -226,22 +226,10 @@ async function addPendingRow(sheets, res, bookingDate) {
 }
 
 // เติมจำนวนแขกให้แถวที่ยังว่าง — ใช้ได้ทั้งกรณีอีเมลคู่มาช้ากว่าอีเมลจอง และ backfill booking เดิมที่ยังอยู่ในช่วง 4 เดือน
-async function fillMissingGuests(sheets, parsed) {
-  const withG = parsed.filter((p) => p.guests);
-  if (!withG.length) return 0;
+async function fillMissingGuests(sheets, parsed, guestIndex) {
   const got = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: SHEET_NAME + "!A:Z" });
-  const rows = got.data.values || [];
-  if (rows.length < 2) return 0;
-  const header = rows[0].map((x) => String(x || "").trim());
-  const resCol = header.indexOf("ResId") >= 0 ? header.indexOf("ResId") : 5;
-  const gi = guestColIndexes(header);
-  const byRes = new Map(withG.map((p) => [p.resId, p.guests]));
-  const todo = [];
-  for (let i = 1; i < rows.length; i++) {
-    const g = byRes.get(String(rows[i][resCol] || "").trim());
-    if (!g || guestsFromRow(rows[i], gi)) continue; // ไม่มีข้อมูล หรือชีตมีค่าอยู่แล้ว (รวมที่แอดมินแก้เอง) → ไม่ทับ
-    todo.push({ row: i + 1, g });
-  }
+  const today = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10); // วันนี้เวลาไทย
+  const todo = planGuestFills(got.data.values || [], parsed, guestIndex, today);
   return writeGuestsToRows(sheets, SHEET_ID, SHEET_NAME, todo);
 }
 
@@ -1191,7 +1179,7 @@ async function _syncEmailsImpl() {
     }
     console.log("ตรวจเสร็จ (ใหม่ " + newCount + " รายการ)");
     try {
-      const filled = await fillMissingGuests(sheets, parsedForGuests);
+      const filled = await fillMissingGuests(sheets, parsedForGuests, guestIndex);
       if (filled > 0) console.log("guests: เติมจำนวนแขกให้ " + filled + " แถวที่ยังว่าง");
     } catch (e) {
       console.error("guests: fillMissingGuests ล้มเหลว (ไม่กระทบการจอง): " + e.message);

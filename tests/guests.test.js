@@ -66,4 +66,20 @@ assert.strictEqual(g.guestsLine({ adults: 2, children: 1 }), "\u{1FAC2} 3 ท่
 assert.strictEqual(g.guestsLine({ adults: 3, children: 2 }).startsWith("\u{1FAC2} 5 ท่าน"), true);
 assert.strictEqual(g.guestsLine({ adults: 0, children: 0, total: 6 }).startsWith("\u{1FAC2} 6"), true); // กรอกเฉพาะยอดรวม
 assert.strictEqual(g.guestsLine(null), "\u2753 ไม่ระบุ");
+// planGuestFills: เติมแถวที่ว่าง — ResId ก่อน, ไม่ตรงก็ใช้ ชื่อ+วันเช็คอิน (ห้อง Mycondo / ResId ไม่ตรง)
+{
+  const H = ["เลขห้อง", "ชื่อแขก", "เช็คอิน", "เช็คเอาท์", "Channel", "ResId", "Note", "วันจอง", "Adults", "Children", "Guests"];
+  const mkA = (name, arrives) => mkEmail("automated@airbnb.com", "Reservation confirmed - " + name + " arrives " + arrives, "GUESTS\n\n2 adults, 1 child\n\nMORE DETAILS");
+  const idx = g.buildGuestIndex([mkA("Mauro Rivera", "Oct 5"), mkA("Mikkel Ulrich Lund", "Nov 3")]);
+  const rows = [H,
+    ["363 Mycondo", "Mauro Rivera", "2026-10-05", "2026-11-02", "Airbnb", "ABB-DIFFERENT-ID", "", ""],           // ResId ไม่ตรง → ใช้ชื่อ+วัน
+    ["363 Mycondo", "Mikkel Ulrich Lund", "2026-11-03", "2026-12-03", "Airbnb", "ABB-X-20261103", "", ""],      // ResId ตรงจาก parsed
+    ["209 Radiance", "Has Value", "2026-10-05", "2026-11-02", "Airbnb", "R3", "", "", 4, 0, 4],                  // มีค่าแล้ว ห้ามทับ
+    ["363 Mycondo cancel", "Mauro Rivera", "2026-10-05", "2026-11-02", "Airbnb", "R4", "", ""],                  // ยกเลิก
+    ["108 Retro", "Mauro Rivera", "2026-10-05", "2026-10-06", "Airbnb", "R5", "", ""],                           // เช็คเอาท์แล้ว (วันนี้ 10-17)
+    ["300 Luxury", "No Email", "2026-10-05", "2026-11-02", "Airbnb", "R6", "", ""],                              // ไม่มีอีเมลคู่ → ไม่เดา
+  ];
+  const plan = g.planGuestFills(rows, [{ resId: "ABB-X-20261103", guests: { adults: 1, children: 0 } }], idx, "2026-10-17");
+  assert.deepStrictEqual(plan, [{ row: 2, g: { adults: 2, children: 1 } }, { row: 3, g: { adults: 1, children: 0 } }]);
+}
 console.log("ALL OK");
