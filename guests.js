@@ -239,6 +239,34 @@ function guestsFromRow(row, idx) {
   return { adults, children, total };
 }
 
+// วางแผนว่าแถวไหนของ Sheet1 ควรถูกเติมจำนวนแขก (ฟังก์ชันล้วน ไม่แตะ Sheets — ทดสอบได้)
+//   rows   = ค่าจาก Sheet1 (แถวแรกคือหัวตาราง)
+//   parsed = [{ resId, guests }] จากอีเมลที่ parse ได้ในรอบนี้
+//   index  = buildGuestIndex(emails)
+// ลำดับ: จับด้วย ResId ก่อน → ถ้าไม่ได้ ใช้ ชื่อ+วันเช็คอิน จากอีเมลคู่ (ครอบคลุมแถวที่ ResId ไม่ตรง/แก้มือ/ห้อง Mycondo)
+// ไม่แตะ: แถวที่มีจำนวนแขกอยู่แล้ว, แถวยกเลิก, แถวที่เช็คเอาท์แล้ว
+function planGuestFills(rows, parsed, index, todayIso) {
+  if (!rows || rows.length < 2) return [];
+  const header = rows[0].map((x) => String(x || "").trim());
+  const col = (name, fallback) => (header.indexOf(name) >= 0 ? header.indexOf(name) : fallback);
+  const cRoom = col("เลขห้อง", 0), cName = col("ชื่อแขก", 1), cIn = col("เช็คอิน", 2), cOut = col("เช็คเอาท์", 3), cRes = col("ResId", 5);
+  const gi = guestColIndexes(header);
+  const byRes = new Map((parsed || []).filter((p) => p.guests).map((p) => [p.resId, p.guests]));
+  const iso = (v) => { const m = String(v || "").trim().match(/^(\d{4}-\d{2}-\d{2})/); return m ? m[1] : ""; };
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (guestsFromRow(row, gi)) continue; // มีค่าแล้ว (รวมที่แอดมินกรอกเอง) ไม่ทับ
+    if (/cancel|ยกเลิก/i.test(String(row[cRoom] || ""))) continue;
+    const checkOut = iso(row[cOut]);
+    if (todayIso && checkOut && checkOut < todayIso) continue;
+    let g = byRes.get(String(row[cRes] || "").trim()) || null;
+    if (!g) g = lookupGuests(index, { guest: String(row[cName] || ""), checkIn: iso(row[cIn]) });
+    if (g && totalOf(g) > 0) out.push({ row: i + 1, g });
+  }
+  return out;
+}
+
 let _colCache = null;
 // หาคอลัมน์ Adults/Children/Guests ใน Sheet1 — ถ้ายังไม่มีหัวตารางให้สร้างต่อท้าย
 async function ensureGuestColumns(sheets, sheetId, sheetName) {
@@ -292,6 +320,6 @@ module.exports = {
   GUEST_HEADERS,
   parseAirbnbGuests, parseLhDetailGuests, parseTripGuests, countsFromSegment,
   nameKey, nameTokens, isGuestOnlyEmail, extractGuestEntry, buildGuestIndex, lookupGuests,
-  totalOf, formatGuestsTh, guestEmoji, guestsLine,
+  totalOf, formatGuestsTh, guestEmoji, guestsLine, planGuestFills,
   colLetter, guestColIndexes, guestsFromRow, ensureGuestColumns, writeGuestsToRow, writeGuestsToRows,
 };
