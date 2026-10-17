@@ -59,11 +59,11 @@ assert.strictEqual(g.colLetter(0), "A"); assert.strictEqual(g.colLetter(25), "Z"
     assert.deepStrictEqual(g.lookupGuests(ix, { guest, checkIn: "2026-10-16" }), { adults: 1, children: 0 });
   }
 }
-// อีโมจิตามจำนวนแขก
-assert.strictEqual(g.guestsLine({ adults: 1, children: 0 }), "\u{1F9CD} 1 ท่าน");
-assert.strictEqual(g.guestsLine({ adults: 2, children: 0 }), "\u{1F46B} 2 ท่าน");
-assert.strictEqual(g.guestsLine({ adults: 2, children: 1 }), "\u{1F468}\u200D\u{1F469}\u200D\u{1F467} 3 ท่าน (ผู้ใหญ่ 2 / เด็ก 1)");
-assert.strictEqual(g.guestsLine({ adults: 3, children: 2 }).startsWith("\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466} 5 ท่าน"), true);
-assert.strictEqual(g.guestsLine({ adults: 0, children: 0, total: 6 }).startsWith("\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466} 6"), true); // กรอกเฉพาะยอดรวม
+// อีโมจิตามจำนวนแขก: 1 👤 · 2 👥 · 3+ 🫂 · ไม่ระบุ ❓
+assert.strictEqual(g.guestsLine({ adults: 1, children: 0 }), "\u{1F464} 1 ท่าน");
+assert.strictEqual(g.guestsLine({ adults: 2, children: 0 }), "\u{1F465} 2 ท่าน");
+assert.strictEqual(g.guestsLine({ adults: 2, children: 1 }), "\u{1FAC2} 3 ท่าน (ผู้ใหญ่ 2 / เด็ก 1)");
+assert.strictEqual(g.guestsLine({ adults: 3, children: 2 }).startsWith("\u{1FAC2} 5 ท่าน"), true);
+assert.strictEqual(g.guestsLine({ adults: 0, children: 0, total: 6 }).startsWith("\u{1FAC2} 6"), true); // กรอกเฉพาะยอดรวม
 assert.strictEqual(g.guestsLine(null), "\u2753 ไม่ระบุ");
 console.log("ALL OK");
