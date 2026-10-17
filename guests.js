@@ -194,8 +194,19 @@ function formatGuestsTh(g) {
 }
 
 // บรรทัดสำหรับข้อความ LINE
+// อีโมจินำหน้าตามจำนวนแขก: 1 🧍 · 2 👫 · 3 👨‍👩‍👧 · 4+ 👨‍👩‍👧‍👦 · ไม่ระบุ ❓
+// (ไม่ใช้ 👤 เพราะเป็นอีโมจิบรรทัดชื่อแขกอยู่แล้ว)
+function guestEmoji(g) {
+  const t = totalOf(g);
+  if (!t) return "\u2753";
+  if (t === 1) return "\u{1F9CD}";
+  if (t === 2) return "\u{1F46B}";
+  if (t === 3) return "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+  return "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}";
+}
+
 function guestsLine(g) {
-  return "\u{1F465} " + formatGuestsTh(g);
+  return guestEmoji(g) + " " + formatGuestsTh(g);
 }
 
 // ─────────────────────────────────────────────
@@ -283,6 +294,6 @@ module.exports = {
   GUEST_HEADERS,
   parseAirbnbGuests, parseLhDetailGuests, parseTripGuests, countsFromSegment,
   nameKey, nameTokens, isGuestOnlyEmail, extractGuestEntry, buildGuestIndex, lookupGuests,
-  totalOf, formatGuestsTh, guestsLine,
+  totalOf, formatGuestsTh, guestEmoji, guestsLine,
   colLetter, guestColIndexes, guestsFromRow, ensureGuestColumns, writeGuestsToRow, writeGuestsToRows,
 };
