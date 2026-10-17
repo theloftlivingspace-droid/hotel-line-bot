@@ -69,7 +69,10 @@ const monthNum = (s) => MONTHS[String(s).toLowerCase().slice(0, 3)] || null;
 
 // ชื่อ → token เรียงตามตัวอักษร (รองรับ "Saphanthong/Chinchutha" = "Chinchutha Saphanthong")
 function nameTokens(name) {
+  // เทียบแบบไม่สนสำเนียง/รูปแบบ Unicode: "č" ตัวเดียว = "c"+เครื่องหมายแยก = "c" (อีเมล/LH/ชีตเก็บไม่เหมือนกัน)
   return String(name || "")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
     .toLowerCase()
     .split(/[\s,\/]+/)
     .map((t) => t.replace(/[^\p{L}\p{N}]/gu, ""))
