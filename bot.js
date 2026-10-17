@@ -1433,7 +1433,6 @@ app.post("/api/send-maid-note", adminAuth, async (req, res) => {
   const lines = [];
   if (room)    lines.push(`🏠 ห้อง ${room}`);
   if (guest)   lines.push(`👤 ${guest}`);
-  if (guest)   lines.push(guestsLine(await resolveGuests(req.body)));
   lines.push(`📝 ${note}`);
   const msg = lines.join("\n");
   try {
