@@ -1476,6 +1476,21 @@ function wasCheckinAlreadyAnnounced(checkin) {
   return false;                                                    // ยังไม่ถึงรอบประกาศ
 }
 
+// ── Dedup guard สำหรับ cancel-notify ────────────────────────────────────
+// กด "ยกเลิกการจอง" ใน dashboard ผ่าน gas-proxy → GAS cancelBooking_ → endpoint นี้
+// ถ้า GAS/Render ช้า (cold start) request อาจถูกยิงซ้ำ (proxy retry / GAS retry)
+// ทำให้ข้อความ "🚫 ยกเลิกการจอง" เด้งซ้ำเข้ากลุ่มแม่บ้าน กันซ้ำตรงนี้โดยดูจากเนื้อหา
+// จริง (room+guest+checkin+checkout) — ถ้าเคยส่งแล้วภายใน 24 ชม. ให้ข้าม
+// (in-memory: ครอบคลุมการยิงซ้ำภายในไม่กี่วินาที/นาที ซึ่งเป็นกรณีหลัก)
+const recentCancelNotifies = new Map(); // key -> timestamp (ms)
+const CANCEL_NOTIFY_DEDUP_MS = 24 * 60 * 60 * 1000;
+function pruneRecentCancelNotifies() {
+  const cutoff = Date.now() - CANCEL_NOTIFY_DEDUP_MS;
+  for (const [key, ts] of recentCancelNotifies) {
+    if (ts < cutoff) recentCancelNotifies.delete(key);
+  }
+}
+
 app.post("/api/cancel-notify", adminAuth, async (req, res) => {
   const { room, guest, checkin, checkout } = req.body;
   if (!room || !guest) return res.status(400).json({ ok: false, error: "room and guest required" });
@@ -1483,6 +1498,14 @@ app.post("/api/cancel-notify", adminAuth, async (req, res) => {
     // ยังไม่เคยแจ้งกลุ่มแม่บ้านมาก่อน (ยกเลิกก่อนถึงรอบประกาศ 19:00) — ไม่ต้องแจ้ง
     return res.json({ ok: true, skipped: true, reason: "not yet announced to maid group" });
   }
+
+  pruneRecentCancelNotifies();
+  const dedupKey = ["cancel", room, guest, checkin, checkout].join("|").trim().toLowerCase();
+  if (recentCancelNotifies.has(dedupKey)) {
+    return res.json({ ok: true, skipped: true, reason: "duplicate cancel-notify (same room/guest/dates already sent)" });
+  }
+  // set ก่อนส่ง (ไม่ใช่หลัง) เพื่อกัน race เมื่อมี 2 request เข้ามาพร้อมกัน
+  recentCancelNotifies.set(dedupKey, Date.now());
   const msg = [
     "🚫 ยกเลิกการจอง",
     `🏠 ห้อง ${room}`,
@@ -1494,6 +1517,7 @@ app.post("/api/cancel-notify", adminAuth, async (req, res) => {
     await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
     res.json({ ok: true });
   } catch (e) {
+    recentCancelNotifies.delete(dedupKey); // ส่งไม่สำเร็จ ให้ retry ได้
     res.status(500).json({ ok: false, error: String(e) });
   }
 });
