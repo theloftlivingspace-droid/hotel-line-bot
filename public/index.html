@@ -897,6 +897,7 @@ async function rejectPayment(id,btn){
   await updatePayment(id,"rejected",note,btn);
 }
 
+const escHtml=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 async function loadMoveouts(){
   const el=document.getElementById("moveout-list");
   try{
@@ -908,8 +909,8 @@ async function loadMoveouts(){
     el.innerHTML=list.map((m,i)=>`
       <div style="padding:12px 16px;border-bottom:1px solid #f1f5f9;display:flex;gap:12px;align-items:flex-start">
         <div style="flex:1">
-          <div style="font-size:13px;font-weight:600">ห้อง ${m.roomNumber} — ${m.tenantName||"—"}</div>
-          <div style="font-size:12px;color:#374151;margin-top:3px;line-height:1.6">${m.moveoutDetail}</div>
+          <div style="font-size:13px;font-weight:600">ห้อง ${escHtml(m.roomNumber)} — ${escHtml(m.tenantName||"—")}</div>
+          <div style="font-size:12px;color:#374151;margin-top:3px;line-height:1.6">${escHtml(m.moveoutDetail)}</div>
           <div style="font-size:11px;color:#94a3b8;margin-top:2px">${new Date(m.date).toLocaleString("th-TH")}</div>
         </div>
         <div style="display:flex;gap:5px;flex-shrink:0;align-items:center">

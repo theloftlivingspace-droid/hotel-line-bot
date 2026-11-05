@@ -263,6 +263,7 @@ async function redisDel(key) {
 }
 
 // ─── File helpers (fallback) ────────────────────────────────────
+const { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom } = require("./moveout.js");
 const DATA_DIR      = path.join(__dirname, "data");
 const ROOMS_FILE    = path.join(DATA_DIR, "rooms.json");
 const USERS_FILE    = path.join(DATA_DIR, "users.json");
@@ -288,6 +289,35 @@ async function loadRooms() {
 async function saveRooms(r) { await redisSet("rooms", r); saveJSON(ROOMS_FILE, r); }
 async function loadUsers() { const u = await redisGet("users"); return u || loadJSON(USERS_FILE, {}); }
 async function saveUsers(u) { await redisSet("users", u); saveJSON(USERS_FILE, u); }
+
+// ─── แจ้งย้ายออก ────────────────────────────────────────────────
+// เก็บใน Redis เป็นหลัก — ดิสก์ของ Render แพ็กเกจฟรีถูกล้างทุกครั้งที่รีสตาร์ท/ดีพลอย
+const MOVEOUT_FILE = path.join(DATA_DIR, "moveout-requests.json");
+async function loadMoveouts() {
+  if (REDIS_URL) {
+    try {
+      const res = await fetch(`${REDIS_URL}/get/moveout_requests`, { headers: { Authorization: `Bearer ${REDIS_TOKEN}` } });
+      const data = await res.json();
+      if (data.result) { const l = JSON.parse(data.result); if (Array.isArray(l)) return l; }
+    } catch (e) { console.error("[Moveout load]", e.message); }
+  }
+  return loadJSON(MOVEOUT_FILE, []);
+}
+async function saveMoveouts(list) {
+  const trimmed = list.slice(0, 200);
+  saveJSON(MOVEOUT_FILE, trimmed);
+  if (!REDIS_URL) return false;
+  try {
+    // POST แทน GET /set/... — ข้อความไทยที่ถูก encode ยาวเกินขีดจำกัด URL ได้
+    const res = await fetch(`${REDIS_URL}/pipeline`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify([["SET", "moveout_requests", JSON.stringify(trimmed)]]),
+    });
+    const data = await res.json();
+    return Array.isArray(data) && data[0] && data[0].result === "OK";
+  } catch (e) { console.error("[Moveout save]", e.message); return false; }
+}
 async function loadPayments() { const p = await redisGet("payments"); return p || loadJSON(PAYMENTS_FILE, []); }
 async function savePayments(p) {
   const meta = p.map(({ imageBase64, ...rest }) => rest);
@@ -660,6 +690,21 @@ async function handleUserMessage(event) {
     return;
   }
 
+  // ─── แจ้งย้ายออก: ผู้เช่าหลายห้อง → ให้เลือกห้องก่อน (ต้องอยู่ก่อนจับเลขห้อง/ชั้น) ───
+  if (user.state === "WAIT_MOVEOUT_ROOM") {
+    if (text === "ยกเลิก") {
+      users[userId].state = "REGISTERED"; users[userId].moveoutRoom = null; await saveUsers(users);
+      await lineReply(event.replyToken, [{ type: "text", text: "ยกเลิกการแจ้งย้ายออกแล้วค่ะ" }]);
+      return;
+    }
+    const roomNums = roomsOfUser(rooms, userId, user);
+    const chosen = pickMentionedRoom(text, roomNums);
+    if (!chosen) { await lineReply(event.replyToken, [moveoutRoomPicker(roomNums)]); return; }
+    users[userId].moveoutRoom = chosen; users[userId].state = "WAIT_MOVEOUT_DATE"; await saveUsers(users);
+    await lineReply(event.replyToken, [{ type: "text", text: moveoutDatePrompt(chosen) }]);
+    return;
+  }
+
   const floorMatch = text.match(/^ชั้น(\d)/);
   if (floorMatch) {
     users[userId].state = "WAIT_ROOM"; users[userId].pendingFloor = floorMatch[1]; users[userId].updatedAt = new Date().toISOString();
@@ -721,8 +766,16 @@ async function handleUserMessage(event) {
     (/ออก/.test(text) && /สิ้นเดือน|เดือน|วันที่|\d/.test(text))
   );
   if (isMoveout && user.state !== "WAIT_MOVEOUT_DATE") {
-    users[userId].state = "WAIT_MOVEOUT_DATE"; await saveUsers(users);
-    await lineReply(event.replyToken, [{ type: "text", text: `📦 แจ้งย้ายออกห้อง ${user.roomNumber} ค่ะ\n\nกรุณาระบุวันที่ต้องการย้ายออกค่ะ\nเช่น: ย้ายออกวันที่ 31 พฤษภาคม 2569\n\nพิมพ์รายละเอียดได้เลยค่ะ 👇` }]);
+    const roomNums = roomsOfUser(rooms, userId, user);
+    const mentioned = pickMentionedRoom(text, roomNums);
+    if (roomNums.length > 1 && !mentioned) {
+      users[userId].state = "WAIT_MOVEOUT_ROOM"; await saveUsers(users);
+      await lineReply(event.replyToken, [moveoutRoomPicker(roomNums)]);
+      return;
+    }
+    const target = mentioned || roomNums[0] || user.roomNumber;
+    users[userId].moveoutRoom = target; users[userId].state = "WAIT_MOVEOUT_DATE"; await saveUsers(users);
+    await lineReply(event.replyToken, [{ type: "text", text: moveoutDatePrompt(target) }]);
     return;
   }
 
@@ -739,10 +792,22 @@ async function handleUserMessage(event) {
     return;
   }
   if (user.state === "WAIT_MOVEOUT_DATE") {
-    users[userId].state = "REGISTERED"; await saveUsers(users);
-    const roomNum = user.roomNumber || "ไม่ระบุ";
+    const roomNums = roomsOfUser(rooms, userId, user);
+    const roomNum = resolveMoveoutRoom({ text, roomNums, selected: user.moveoutRoom, profileRoom: user.roomNumber }) || "ไม่ระบุ";
+    const tenantName = rooms[roomNum]?.tenantName || "ไม่ระบุ";
+    const record = { date: new Date().toISOString(), roomNumber: roomNum, tenantName, userId, moveoutDetail: String(text).slice(0, 500), status: "pending" };
+    let saved = false;
+    try { const list = await loadMoveouts(); list.unshift(record); saved = await saveMoveouts(list); }
+    catch (e) { console.error("[Moveout record]", e.message); }
+    if (!saved) console.error(`[Moveout] บันทึกลง Redis ไม่สำเร็จ ห้อง ${roomNum}: ${record.moveoutDetail}`);
+    users[userId].state = "REGISTERED"; users[userId].moveoutRoom = null; await saveUsers(users);
     await lineReply(event.replyToken, [{ type: "text",
-      text: `✅ รับแจ้งย้ายออกเป็นลายลักษณ์อักษรแล้วค่ะ\n\n🏠 ห้อง: ${roomNum}\n👤 ชื่อ: ${rooms[roomNum]?.tenantName || "ไม่ระบุ"}\n📅 รายละเอียด: ${text}\n\nเจ้าหน้าที่จะติดต่อกลับเพื่อนัดหมายตรวจสอบห้องค่ะ 😊` }]);
+      text: `✅ รับแจ้งย้ายออกเป็นลายลักษณ์อักษรแล้วค่ะ\n\n🏠 ห้อง: ${roomNum}\n👤 ชื่อ: ${tenantName}\n📅 รายละเอียด: ${text}\n\nเจ้าหน้าที่จะติดต่อกลับเพื่อนัดหมายตรวจสอบห้องค่ะ 😊` }]);
+    // แจ้งแอดมินทันที (ส่งเสมอ แม้บันทึกลงคอนโซลไม่สำเร็จ จะได้ไม่หลุด)
+    if (ADMIN_USER) {
+      linePush(ADMIN_USER, [{ type: "text",
+        text: `📦 แจ้งย้ายออกใหม่\n🏠 ห้อง ${roomNum} — ${tenantName}\n📅 ${text}` + (saved ? "\n\nดู/ยืนยันได้ที่ Billing Console → แจ้งย้ายออก" : "\n\n⚠️ บันทึกลงคอนโซลไม่สำเร็จ กรุณาจดไว้ก่อน") }]).catch(() => {});
+    }
     return;
   }
 
@@ -750,6 +815,20 @@ async function handleUserMessage(event) {
     // ไม่ตอบข้อความทั่วไป — ผู้เช่าอาจแค่คุยกัน ไม่ต้องการให้บอทตอบทุกครั้ง
     return;
   }
+}
+
+function moveoutDatePrompt(roomNum) {
+  return `📦 แจ้งย้ายออกห้อง ${roomNum} ค่ะ\n\nกรุณาระบุวันที่ต้องการย้ายออกค่ะ\nเช่น: ย้ายออกวันที่ 31 พฤษภาคม 2569\n\nพิมพ์รายละเอียดได้เลยค่ะ 👇`;
+}
+function moveoutRoomPicker(roomNums) {
+  return {
+    type: "text",
+    text: "📦 แจ้งย้ายออก\n\nคุณมีหลายห้อง ต้องการแจ้งย้ายออกห้องไหนคะ?",
+    quickReply: { items: [
+      ...roomNums.slice(0, 12).map(n => ({ type: "action", action: { type: "message", label: `ห้อง ${n}`, text: `ห้อง ${n}` } })),
+      { type: "action", action: { type: "message", label: "ยกเลิก", text: "ยกเลิก" } },
+    ] },
+  };
 }
 
 async function handleImageMessage(event) {
@@ -1666,19 +1745,41 @@ app.post("/api/test-reminder", adminAuth, async (req, res) => {
 });
 app.get("/api/doc-requests",     adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "doc-requests.json"), [])); });
 app.get("/api/contact-logs",     adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "contact-logs.json"), [])); });
-app.get("/api/moveout-requests", adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "moveout-requests.json"), [])); });
+app.get("/api/moveout-requests", adminAuth, async (req, res) => { res.json(await loadMoveouts()); });
 app.patch("/api/moveout-requests/:idx", adminAuth, async (req, res) => {
   const idx = parseInt(req.params.idx), { status } = req.body;
-  const logs = loadJSON(path.join(DATA_DIR, "moveout-requests.json"), []);
+  const logs = await loadMoveouts();
   if (!logs[idx]) return res.status(404).json({ error: "Not found" });
   logs[idx].status = status; logs[idx].updatedAt = new Date().toISOString();
-  saveJSON(path.join(DATA_DIR, "moveout-requests.json"), logs);
+  await saveMoveouts(logs);
   if (status === "confirmed") {
     const roomNum = logs[idx].roomNumber, rooms = await loadRooms();
     if (rooms[roomNum]) { const oldUserId = rooms[roomNum].lineUserId; rooms[roomNum].lineUserId = ""; await saveRooms(rooms); if (oldUserId) { linePush(oldUserId, [{ type: "text", text: `✅ รับทราบการแจ้งย้ายออกห้อง ${roomNum} แล้วค่ะ\n\nเจ้าหน้าที่จะติดต่อเพื่อนัดตรวจสอบห้องและดำเนินการต่อไปค่ะ\n\nขอบคุณที่ใช้บริการนะคะ 😊` }]).catch(() => {}); } }
   }
   res.json({ ok: true });
 });
+
+// ─── one-off: กู้รายการแจ้งย้ายออกห้อง 202 ───────────────────────
+// 9 ต.ค. 2569 19:23 ผู้เช่าแจ้งย้ายออก 202 วันที่ 15 พ.ย. 2569 แต่บอทตอบรับโดยไม่ได้บันทึก (บั๊กที่แก้ใน PR นี้)
+// รันครั้งเดียวตอนบูต (กันซ้ำด้วย flag ใน Redis) — ลบฟังก์ชันนี้ทิ้งได้หลังดีพลอยแล้ว
+async function seedMoveout202Once() {
+  if (!REDIS_URL) return;
+  const FLAG = "moveout_seed_202_20261115";
+  if (await redisGet(FLAG)) return;
+  const rooms = await loadRooms();
+  const r = rooms["202"];
+  const list = await loadMoveouts();
+  const exists = list.some(m => String(m.roomNumber) === "202" && /15\s*พ\.ย/.test(m.moveoutDetail || ""));
+  if (!exists) {
+    list.unshift({
+      date: "2026-10-09T12:23:00.000Z", roomNumber: "202", tenantName: r?.tenantName || "ไม่ระบุ", userId: r?.lineUserId || "",
+      moveoutDetail: "ห้อง 202  ย้ายออกวันที่ 15 พ.ย.2569", status: "pending", note: "กู้คืนจากแชท LINE (บอทไม่ได้บันทึกตอนนั้น)",
+    });
+    if (!(await saveMoveouts(list))) return; // ไม่ตั้ง flag → ลองใหม่รอบบูตหน้า
+    console.log("[Moveout seed] เพิ่มรายการแจ้งย้ายออกห้อง 202 แล้ว");
+  }
+  await redisSet(FLAG, "1");
+}
 
 function startWebhookServer() {
   app.listen(PORT, () => console.log("Webhook port " + PORT));
@@ -1703,6 +1804,7 @@ console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่�
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON:", process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? `OK (${process.env.GOOGLE_SERVICE_ACCOUNT_JSON.length} chars)` : "(ไม่พบ)");
 
 startWebhookServer();
+seedMoveout202Once().catch(e => console.error("[Moveout seed]", e.message));
 
 // Push badge check: ทุก 5 นาที (booking to add / invoice to create / stock out)
 cron.schedule("*/5 * * * *", () => runBadgeCheck().catch((e) => console.error("[push-badge] cron error:", e.message)));
