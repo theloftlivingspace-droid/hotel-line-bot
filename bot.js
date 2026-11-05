@@ -1748,13 +1748,22 @@ app.get("/api/contact-logs",     adminAuth, (req, res) => { res.json(loadJSON(pa
 app.get("/api/moveout-requests", adminAuth, async (req, res) => { res.json(await loadMoveouts()); });
 app.patch("/api/moveout-requests/:idx", adminAuth, async (req, res) => {
   const idx = parseInt(req.params.idx), { status } = req.body;
+  if (!["pending", "confirmed", "rejected", "completed"].includes(status)) return res.status(400).json({ error: "invalid status" });
   const logs = await loadMoveouts();
   if (!logs[idx]) return res.status(404).json({ error: "Not found" });
   logs[idx].status = status; logs[idx].updatedAt = new Date().toISOString();
   await saveMoveouts(logs);
+  const roomNum = logs[idx].roomNumber;
   if (status === "confirmed") {
-    const roomNum = logs[idx].roomNumber, rooms = await loadRooms();
-    if (rooms[roomNum]) { const oldUserId = rooms[roomNum].lineUserId; rooms[roomNum].lineUserId = ""; await saveRooms(rooms); if (oldUserId) { linePush(oldUserId, [{ type: "text", text: `✅ รับทราบการแจ้งย้ายออกห้อง ${roomNum} แล้วค่ะ\n\nเจ้าหน้าที่จะติดต่อเพื่อนัดตรวจสอบห้องและดำเนินการต่อไปค่ะ\n\nขอบคุณที่ใช้บริการนะคะ 😊` }]).catch(() => {}); } }
+    // รับทราบ + แจ้งผู้เช่า แต่ "ยังไม่ล้าง LINE ID" — ยังต้องติดต่อ/เรียกเก็บค่าใช้จ่ายวันย้ายออก
+    const rooms = await loadRooms();
+    const uid = rooms[roomNum]?.lineUserId || logs[idx].userId;
+    if (uid) linePush(uid, [{ type: "text", text: `✅ รับทราบการแจ้งย้ายออกห้อง ${roomNum} แล้วค่ะ\n\nเจ้าหน้าที่จะติดต่อเพื่อนัดตรวจสอบห้องและดำเนินการต่อไปค่ะ 😊` }]).catch(() => {});
+  } else if (status === "completed") {
+    // ปิดงาน (เรียกเก็บครบแล้ว) → ล้าง LINE ID ของห้อง เฉพาะเมื่อยังเป็นของผู้เช่าที่แจ้งย้ายออก
+    const rooms = await loadRooms();
+    const r = rooms[roomNum];
+    if (r && r.lineUserId && (!logs[idx].userId || r.lineUserId === logs[idx].userId)) { r.lineUserId = ""; await saveRooms(rooms); }
   }
   res.json({ ok: true });
 });
