@@ -1759,25 +1759,31 @@ app.patch("/api/moveout-requests/:idx", adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── one-off: กู้รายการแจ้งย้ายออกห้อง 202 ───────────────────────
-// 9 ต.ค. 2569 19:23 ผู้เช่าแจ้งย้ายออก 202 วันที่ 15 พ.ย. 2569 แต่บอทตอบรับโดยไม่ได้บันทึก (บั๊กที่แก้ใน PR นี้)
-// รันครั้งเดียวตอนบูต (กันซ้ำด้วย flag ใน Redis) — ลบฟังก์ชันนี้ทิ้งได้หลังดีพลอยแล้ว
-async function seedMoveout202Once() {
+// ─── one-off: กู้รายการแจ้งย้ายออกห้อง 202 + 406 ─────────────────
+// 9 ต.ค. 2569 19:23 ผู้เช่า (202+406) แจ้งย้ายออกวันที่ 15 พ.ย. 2569 แต่บอทตอบรับโดยไม่ได้บันทึก (บั๊กที่แก้ใน PR นี้)
+// เจ้าของยืนยัน 5 พ.ย. 2569 ว่า 406 ย้ายออกวันเดียวกัน
+// รันครั้งเดียวตอนบูต (กันซ้ำด้วย flag ใน Redis + เช็กรายการซ้ำรายห้อง) — ลบฟังก์ชันนี้ทิ้งได้หลังดีพลอยแล้ว
+async function seedMoveoutOnce() {
   if (!REDIS_URL) return;
-  const FLAG = "moveout_seed_202_20261115";
+  const FLAG = "moveout_seed_202_406_20261115";
   if (await redisGet(FLAG)) return;
   const rooms = await loadRooms();
-  const r = rooms["202"];
   const list = await loadMoveouts();
-  const exists = list.some(m => String(m.roomNumber) === "202" && /15\s*พ\.ย/.test(m.moveoutDetail || ""));
-  if (!exists) {
-    list.unshift({
-      date: "2026-10-09T12:23:00.000Z", roomNumber: "202", tenantName: r?.tenantName || "ไม่ระบุ", userId: r?.lineUserId || "",
-      moveoutDetail: "ห้อง 202  ย้ายออกวันที่ 15 พ.ย.2569", status: "pending", note: "กู้คืนจากแชท LINE (บอทไม่ได้บันทึกตอนนั้น)",
-    });
-    if (!(await saveMoveouts(list))) return; // ไม่ตั้ง flag → ลองใหม่รอบบูตหน้า
-    console.log("[Moveout seed] เพิ่มรายการแจ้งย้ายออกห้อง 202 แล้ว");
+  const seeds = [
+    { room: "202", date: "2026-10-09T12:23:00.000Z", detail: "ห้อง 202  ย้ายออกวันที่ 15 พ.ย.2569", note: "กู้คืนจากแชท LINE (บอทไม่ได้บันทึกตอนนั้น)" },
+    { room: "406", date: "2026-11-05T00:00:00.000Z", detail: "ห้อง 406  ย้ายออกวันที่ 15 พ.ย.2569", note: "เจ้าของยืนยันว่าย้ายออกวันเดียวกับ 202 (ไม่ได้พิมพ์ในแชท)" },
+  ];
+  let added = 0;
+  for (const sd of seeds) {
+    const exists = list.some(m => String(m.roomNumber) === sd.room && /15\s*พ\.ย/.test(m.moveoutDetail || ""));
+    if (exists) continue;
+    const r = rooms[sd.room];
+    list.unshift({ date: sd.date, roomNumber: sd.room, tenantName: r?.tenantName || "ไม่ระบุ", userId: r?.lineUserId || "",
+      moveoutDetail: sd.detail, status: "pending", note: sd.note });
+    added++;
   }
+  if (added && !(await saveMoveouts(list))) return; // ไม่ตั้ง flag → ลองใหม่รอบบูตหน้า
+  if (added) console.log(`[Moveout seed] เพิ่มรายการแจ้งย้ายออก ${added} ห้อง (202/406)`);
   await redisSet(FLAG, "1");
 }
 
@@ -1804,7 +1810,7 @@ console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่�
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON:", process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? `OK (${process.env.GOOGLE_SERVICE_ACCOUNT_JSON.length} chars)` : "(ไม่พบ)");
 
 startWebhookServer();
-seedMoveout202Once().catch(e => console.error("[Moveout seed]", e.message));
+seedMoveoutOnce().catch(e => console.error("[Moveout seed]", e.message));
 
 // Push badge check: ทุก 5 นาที (booking to add / invoice to create / stock out)
 cron.schedule("*/5 * * * *", () => runBadgeCheck().catch((e) => console.error("[push-badge] cron error:", e.message)));
