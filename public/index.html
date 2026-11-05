@@ -897,6 +897,7 @@ async function rejectPayment(id,btn){
   await updatePayment(id,"rejected",note,btn);
 }
 
+const escHtml=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 async function loadMoveouts(){
   const el=document.getElementById("moveout-list");
   try{
@@ -908,22 +909,27 @@ async function loadMoveouts(){
     el.innerHTML=list.map((m,i)=>`
       <div style="padding:12px 16px;border-bottom:1px solid #f1f5f9;display:flex;gap:12px;align-items:flex-start">
         <div style="flex:1">
-          <div style="font-size:13px;font-weight:600">ห้อง ${m.roomNumber} — ${m.tenantName||"—"}</div>
-          <div style="font-size:12px;color:#374151;margin-top:3px;line-height:1.6">${m.moveoutDetail}</div>
+          <div style="font-size:13px;font-weight:600">ห้อง ${escHtml(m.roomNumber)} — ${escHtml(m.tenantName||"—")}</div>
+          <div style="font-size:12px;color:#374151;margin-top:3px;line-height:1.6">${escHtml(m.moveoutDetail)}</div>
           <div style="font-size:11px;color:#94a3b8;margin-top:2px">${new Date(m.date).toLocaleString("th-TH")}</div>
         </div>
         <div style="display:flex;gap:5px;flex-shrink:0;align-items:center">
           ${m.status==="pending"?`
             <button class="btn btn-primary btn-sm" onclick="confirmMoveout(${i})">✅ ยืนยัน</button>
             <button class="btn btn-ghost btn-sm" onclick="rejectMoveout(${i})">ยกเลิก</button>
-          `:`<span class="pill ${m.status==="confirmed"?"pill-green":"pill-gray"}">${m.status==="confirmed"?"ยืนยันแล้ว":"ยกเลิก"}</span>`}
+          `:m.status==="confirmed"?`<span class="pill pill-green">ยืนยันแล้ว</span><button class="btn btn-ghost btn-sm" onclick="completeMoveout(${i})">🏁 ปิดงาน</button>`:`<span class="pill pill-gray">${m.status==="completed"?"ปิดงานแล้ว":"ยกเลิก"}</span>`}
         </div>
       </div>`).join("");
   }catch(e){el.innerHTML=`<div class="empty" style="color:#b91c1c">${e.message}</div>`;}
 }
 async function confirmMoveout(idx){
-  if(!confirm("ยืนยันการแจ้งย้ายออก?\nระบบจะล้าง LINE User ID และแจ้งผู้เช่าอัตโนมัติ"))return;
+  if(!confirm("ยืนยันการแจ้งย้ายออก?\nระบบจะแจ้งผู้เช่าว่ารับทราบแล้ว (ยังไม่ล้าง LINE User ID — กด 🏁 ปิดงาน ตอนเรียกเก็บค่าใช้จ่ายเสร็จ)"))return;
   await api(`/api/moveout-requests/${idx}`,{method:"PATCH",body:JSON.stringify({status:"confirmed"})});
+  loadMoveouts();loadRooms();
+}
+async function completeMoveout(idx){
+  if(!confirm("ปิดงานย้ายออก?\nระบบจะล้าง LINE User ID ของห้องนี้ (ผู้เช่าจะไม่ได้รับข้อความจากระบบอีก) — กดต่อเมื่อเรียกเก็บค่าใช้จ่ายครบแล้ว"))return;
+  await api(`/api/moveout-requests/${idx}`,{method:"PATCH",body:JSON.stringify({status:"completed"})});
   loadMoveouts();loadRooms();
 }
 async function rejectMoveout(idx){
