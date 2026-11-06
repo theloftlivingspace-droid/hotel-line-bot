@@ -263,7 +263,10 @@ async function redisDel(key) {
 }
 
 // ─── File helpers (fallback) ────────────────────────────────────
-const { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort, buildMoveoutTenantMessage } = require("./moveout.js");
+const {
+  roomsOfUser, pickMentionedRoom, isValidIsoDate, formatThaiDateShort, isMoveoutKeyword, pickRoomsFromText,
+  moveoutDateRange, isMoveoutDateInRange, buildMoveoutTenantMessage,
+} = require("./moveout.js");
 const DATA_DIR      = path.join(__dirname, "data");
 const ROOMS_FILE    = path.join(DATA_DIR, "rooms.json");
 const USERS_FILE    = path.join(DATA_DIR, "users.json");
@@ -690,19 +693,33 @@ async function handleUserMessage(event) {
     return;
   }
 
-  // ─── แจ้งย้ายออก: ผู้เช่าหลายห้อง → ให้เลือกห้องก่อน (ต้องอยู่ก่อนจับเลขห้อง/ชั้น) ───
-  if (user.state === "WAIT_MOVEOUT_ROOM") {
-    if (text === "ยกเลิก") {
-      users[userId].state = "REGISTERED"; users[userId].moveoutRoom = null; await saveUsers(users);
+  // ─── แจ้งย้ายออก: อยู่ระหว่าง flow (เลือกห้อง → เลือกวัน → ยืนยัน) ─────
+  if (["WAIT_MOVEOUT_ROOM", "WAIT_MOVEOUT_DATE", "WAIT_MOVEOUT_CONFIRM"].includes(user.state)) {
+    const draft = user.moveoutDraft;
+    const expired = !draft || Date.now() - draft.createdAt > MOVEOUT_DRAFT_TTL_MS;
+    if (text === "ยกเลิก" || text === "ยกเลิกการแจ้ง") {
+      users[userId].state = "REGISTERED"; users[userId].moveoutDraft = null; await saveUsers(users);
       await lineReply(event.replyToken, [{ type: "text", text: "ยกเลิกการแจ้งย้ายออกแล้วค่ะ" }]);
       return;
     }
-    const roomNums = roomsOfUser(rooms, userId, user);
-    const chosen = pickMentionedRoom(text, roomNums);
-    if (!chosen) { await lineReply(event.replyToken, [moveoutRoomPicker(roomNums)]); return; }
-    users[userId].moveoutRoom = chosen; users[userId].state = "WAIT_MOVEOUT_DATE"; await saveUsers(users);
-    await lineReply(event.replyToken, [{ type: "text", text: moveoutDatePrompt(chosen) }]);
-    return;
+    if (expired) {
+      // ฉบับร่างหมดอายุ → ล้าง แล้วปล่อยให้ข้อความนี้ไปตรวจ keyword เริ่มใหม่ด้านล่าง
+      users[userId].state = "REGISTERED"; users[userId].moveoutDraft = null; await saveUsers(users);
+      user = users[userId];
+    } else {
+      const roomNums = roomsOfUser(rooms, userId, user);
+      if (user.state === "WAIT_MOVEOUT_ROOM") {
+        const chosen = pickRoomsFromText(text, roomNums);
+        if (!chosen) { await lineReply(event.replyToken, [moveoutRoomPicker(roomNums)]); return; }
+        draft.rooms = chosen; users[userId].state = "WAIT_MOVEOUT_DATE"; users[userId].moveoutDraft = draft; await saveUsers(users);
+        await lineReply(event.replyToken, [moveoutDatePicker(draft)]);
+      } else if (user.state === "WAIT_MOVEOUT_DATE") {
+        await lineReply(event.replyToken, [moveoutDatePicker(draft, "ช่วยกดปุ่ม 📅 เลือกวันที่ ด้านล่างนะคะ (พิมพ์วันที่เองไม่ได้ค่ะ) 👇")]);
+      } else {
+        await lineReply(event.replyToken, [moveoutConfirmCard(draft)]);
+      }
+      return;
+    }
   }
 
   const floorMatch = text.match(/^ชั้น(\d)/);
@@ -759,23 +776,20 @@ async function handleUserMessage(event) {
     return;
   }
 
-  // ─── จับ keyword ย้ายออก ทุก state (ถ้ามีห้องแล้ว) ────────────
-  const isMoveout = user.roomNumber && (
-    text.includes("ย้ายออก") ||
-    text.includes("สิ้นสัญญา") ||
-    (/ออก/.test(text) && /สิ้นเดือน|เดือน|วันที่|\d/.test(text))
-  );
-  if (isMoveout && user.state !== "WAIT_MOVEOUT_DATE") {
-    const roomNums = roomsOfUser(rooms, userId, user);
-    const mentioned = pickMentionedRoom(text, roomNums);
-    if (roomNums.length > 1 && !mentioned) {
+  // ─── จับ keyword ย้ายออก (ผู้เช่าที่มีห้องแล้ว) → เริ่ม flow ─────────
+  const myRoomNums = roomsOfUser(rooms, userId, user);
+  if (myRoomNums.length && isMoveoutKeyword(text)) {
+    const picked = pickRoomsFromText(text, myRoomNums);
+    const draft = { id: newDraftId(), createdAt: Date.now(), rooms: null, date: null };
+    users[userId].moveoutDraft = draft;
+    if (myRoomNums.length > 1 && !picked) {
       users[userId].state = "WAIT_MOVEOUT_ROOM"; await saveUsers(users);
-      await lineReply(event.replyToken, [moveoutRoomPicker(roomNums)]);
+      await lineReply(event.replyToken, [moveoutRoomPicker(myRoomNums)]);
       return;
     }
-    const target = mentioned || roomNums[0] || user.roomNumber;
-    users[userId].moveoutRoom = target; users[userId].state = "WAIT_MOVEOUT_DATE"; await saveUsers(users);
-    await lineReply(event.replyToken, [{ type: "text", text: moveoutDatePrompt(target) }]);
+    draft.rooms = picked || [myRoomNums[0]];
+    users[userId].state = "WAIT_MOVEOUT_DATE"; await saveUsers(users);
+    await lineReply(event.replyToken, [moveoutDatePicker(draft)]);
     return;
   }
 
@@ -791,44 +805,130 @@ async function handleUserMessage(event) {
     await lineReply(event.replyToken, [{ type: "text", text: `✅ รับเรื่องแล้วค่ะ\n\nห้อง: ${roomNum}\nเรื่อง: ${text}\n\nเจ้าหน้าที่จะติดต่อกลับโดยเร็วที่สุดค่ะ 😊` }]);
     return;
   }
-  if (user.state === "WAIT_MOVEOUT_DATE") {
-    const roomNums = roomsOfUser(rooms, userId, user);
-    const roomNum = resolveMoveoutRoom({ text, roomNums, selected: user.moveoutRoom, profileRoom: user.roomNumber }) || "ไม่ระบุ";
-    const tenantName = rooms[roomNum]?.tenantName || "ไม่ระบุ";
-    const record = { date: new Date().toISOString(), roomNumber: roomNum, tenantName, userId, moveoutDetail: String(text).slice(0, 500), status: "pending" };
-    let saved = false;
-    try { const list = await loadMoveouts(); list.unshift(record); saved = await saveMoveouts(list); }
-    catch (e) { console.error("[Moveout record]", e.message); }
-    if (!saved) console.error(`[Moveout] บันทึกลง Redis ไม่สำเร็จ ห้อง ${roomNum}: ${record.moveoutDetail}`);
-    users[userId].state = "REGISTERED"; users[userId].moveoutRoom = null; await saveUsers(users);
-    await lineReply(event.replyToken, [{ type: "text",
-      text: `✅ รับแจ้งย้ายออกเป็นลายลักษณ์อักษรแล้วค่ะ\n\n🏠 ห้อง: ${roomNum}\n👤 ชื่อ: ${tenantName}\n📅 รายละเอียด: ${text}\n\nเจ้าหน้าที่จะติดต่อกลับเพื่อนัดหมายตรวจสอบห้องค่ะ 😊` }]);
-    // แจ้งแอดมินทันที (ส่งเสมอ แม้บันทึกลงคอนโซลไม่สำเร็จ จะได้ไม่หลุด)
-    if (ADMIN_USER) {
-      linePush(ADMIN_USER, [{ type: "text",
-        text: `📦 แจ้งย้ายออกใหม่\n🏠 ห้อง ${roomNum} — ${tenantName}\n📅 ${text}` + (saved ? "\n\nดู/ยืนยันได้ที่ Billing Console → แจ้งย้ายออก" : "\n\n⚠️ บันทึกลงคอนโซลไม่สำเร็จ กรุณาจดไว้ก่อน") }]).catch(() => {});
-    }
-    return;
-  }
-
   if (user.state === "REGISTERED") {
     // ไม่ตอบข้อความทั่วไป — ผู้เช่าอาจแค่คุยกัน ไม่ต้องการให้บอทตอบทุกครั้ง
     return;
   }
 }
 
-function moveoutDatePrompt(roomNum) {
-  return `📦 แจ้งย้ายออกห้อง ${roomNum} ค่ะ\n\nกรุณาระบุวันที่ต้องการย้ายออกค่ะ\nเช่น: ย้ายออกวันที่ 31 พฤษภาคม 2569\n\nพิมพ์รายละเอียดได้เลยค่ะ 👇`;
-}
+const MOVEOUT_DRAFT_TTL_MS = 30 * 60 * 1000;
+function newDraftId() { return Math.random().toString(36).slice(2, 8); }
+
 function moveoutRoomPicker(roomNums) {
   return {
     type: "text",
     text: "📦 แจ้งย้ายออก\n\nคุณมีหลายห้อง ต้องการแจ้งย้ายออกห้องไหนคะ?",
     quickReply: { items: [
-      ...roomNums.slice(0, 12).map(n => ({ type: "action", action: { type: "message", label: `ห้อง ${n}`, text: `ห้อง ${n}` } })),
+      ...roomNums.slice(0, 10).map(n => ({ type: "action", action: { type: "message", label: `ห้อง ${n}`, text: `ห้อง ${n}` } })),
+      { type: "action", action: { type: "message", label: "ทุกห้อง", text: "ทุกห้อง" } },
       { type: "action", action: { type: "message", label: "ยกเลิก", text: "ยกเลิก" } },
     ] },
   };
+}
+// ปุ่มเลือกวันของ LINE (datetimepicker): ปฏิทินจำกัดเฉพาะช่วงที่เลือกได้ (moveoutDateRange)
+function moveoutDatePicker(draft, hint) {
+  const { min, max } = moveoutDateRange();
+  const rule = `ตามสัญญา ต้องแจ้งล่วงหน้าอย่างน้อย 1 เดือน\nเลือกวันย้ายออกได้ตั้งแต่ ${formatThaiDateShort(min)} ถึง ${formatThaiDateShort(max)} ค่ะ`;
+  return {
+    type: "text",
+    text: `📦 แจ้งย้ายออก ห้อง ${draft.rooms.join(", ")}\n\n${rule}\n\n${hint || "กดปุ่ม 📅 เลือกวันที่ ด้านล่างได้เลยค่ะ 👇"}`,
+    quickReply: { items: [
+      { type: "action", action: { type: "datetimepicker", label: "📅 เลือกวันที่", data: `action=MOVEOUT_DATE&d=${draft.id}`, mode: "date", initial: min, min, max } },
+      { type: "action", action: { type: "message", label: "ยกเลิก", text: "ยกเลิก" } },
+    ] },
+  };
+}
+// การ์ดสรุปก่อนยืนยัน — ปุ่มผูกกับรหัสฉบับร่าง (ปุ่มเก่าที่ค้างในแชทกดแล้วไม่มีผล)
+function moveoutConfirmCard(draft) {
+  const rooms = draft.rooms.join(", "), d = formatThaiDateShort(draft.date);
+  return {
+    type: "template",
+    altText: `ยืนยันแจ้งย้ายออก ห้อง ${rooms} วันที่ ${d}`,
+    template: {
+      type: "buttons",
+      text: `📦 ยืนยันแจ้งย้ายออก\n🏠 ห้อง ${rooms}\n📅 วันที่ ${d}`.slice(0, 160),
+      actions: [
+        { type: "postback", label: "✅ ยืนยัน", data: `action=MOVEOUT_CONFIRM&d=${draft.id}`, displayText: "ยืนยันการแจ้ง" },
+        { type: "postback", label: "📅 เปลี่ยนวัน", data: `action=MOVEOUT_CHANGE&d=${draft.id}`, displayText: "เปลี่ยนวันที่" },
+        { type: "postback", label: "ยกเลิก", data: `action=MOVEOUT_CANCEL&d=${draft.id}`, displayText: "ยกเลิกการแจ้ง" },
+      ],
+    },
+  };
+}
+
+// บันทึกแจ้งย้ายออก (ใหม่ หรือเปลี่ยนวันของรายการที่รออยู่) — ใช้ร่วมกันทุกช่องทาง
+async function recordMoveouts({ roomNums, moveoutDate, userId, rooms, source }) {
+  const list = await loadMoveouts();
+  const created = [], changed = [], unchanged = [];
+  for (const rn of roomNums) {
+    const detail = `ห้อง ${rn} ย้ายออกวันที่ ${formatThaiDateShort(moveoutDate)}`;
+    const ex = list.find(m => String(m.roomNumber) === String(rn) && ["pending", "confirmed"].includes(m.status));
+    if (ex) {
+      if (ex.moveoutDate === moveoutDate) { unchanged.push(rn); continue; }
+      ex.prevMoveoutDate = ex.moveoutDate || null; ex.moveoutDate = moveoutDate; ex.moveoutDetail = detail; ex.updatedAt = new Date().toISOString();
+      changed.push(rn);
+    } else {
+      list.unshift({ id: newDraftId() + Date.now().toString(36), date: new Date().toISOString(), roomNumber: String(rn), tenantName: rooms[rn]?.tenantName || "ไม่ระบุ",
+        userId, moveoutDate, moveoutDetail: detail, status: "pending", source });
+      created.push(rn);
+    }
+  }
+  const saved = (created.length || changed.length) ? await saveMoveouts(list) : true;
+  return { saved, created, changed, unchanged };
+}
+
+async function handleMoveoutPostback(event, data, users, rooms, user) {
+  const { userId } = event.source;
+  const p = new URLSearchParams(data), act = p.get("action"), id = p.get("d");
+  const draft = user?.moveoutDraft;
+  const reply = (text, extra = []) => lineReply(event.replyToken, [{ type: "text", text }, ...extra]);
+  if (!draft || draft.id !== id || Date.now() - draft.createdAt > MOVEOUT_DRAFT_TTL_MS) {
+    await reply("ปุ่มนี้ใช้ไม่ได้แล้วค่ะ (อาจแจ้งไปแล้วหรือหมดอายุ)\nถ้าต้องการแจ้งย้ายออก พิมพ์ \"ย้ายออก\" เพื่อเริ่มใหม่ได้เลยค่ะ");
+    return;
+  }
+  const reset = async () => { users[userId].state = "REGISTERED"; users[userId].moveoutDraft = null; await saveUsers(users); };
+
+  if (act === "MOVEOUT_CANCEL") { await reset(); await reply("ยกเลิกการแจ้งย้ายออกแล้วค่ะ"); return; }
+  if (act === "MOVEOUT_CHANGE") {
+    draft.date = null; users[userId].state = "WAIT_MOVEOUT_DATE"; users[userId].moveoutDraft = draft; await saveUsers(users);
+    await lineReply(event.replyToken, [moveoutDatePicker(draft)]); return;
+  }
+  if (act === "MOVEOUT_DATE") {
+    const date = event.postback?.params?.date;
+    if (!draft.rooms) { await reply("กรุณาเลือกห้องก่อนค่ะ พิมพ์ \"ย้ายออก\" เพื่อเริ่มใหม่"); return; }
+    if (!isMoveoutDateInRange(date)) {
+      await lineReply(event.replyToken, [moveoutDatePicker(draft, "วันที่เลือกไม่อยู่ในช่วงที่กำหนดค่ะ กรุณาเลือกใหม่ 👇")]); return;
+    }
+    draft.date = date; users[userId].state = "WAIT_MOVEOUT_CONFIRM"; users[userId].moveoutDraft = draft; await saveUsers(users);
+    await lineReply(event.replyToken, [moveoutConfirmCard(draft)]); return;
+  }
+  if (act === "MOVEOUT_CONFIRM") {
+    if (user.state !== "WAIT_MOVEOUT_CONFIRM" || !draft.date || !draft.rooms) { await reply("กรุณาเลือกวันที่ก่อนค่ะ"); return; }
+    const mine = roomsOfUser(rooms, userId, user);
+    const roomNums = draft.rooms.filter(r => mine.includes(String(r)));
+    if (!roomNums.length) { await reset(); await reply("ไม่พบห้องของคุณในระบบค่ะ กรุณาติดต่อเจ้าหน้าที่"); return; }
+    let result = { saved: false, created: [], changed: [], unchanged: [] };
+    try { result = await recordMoveouts({ roomNums, moveoutDate: draft.date, userId, rooms, source: "tenant" }); }
+    catch (e) { console.error("[Moveout record]", e.message); }
+    const { saved, created, changed, unchanged } = result;
+    const dateTxt = formatThaiDateShort(draft.date), tenantName = rooms[roomNums[0]]?.tenantName || "ไม่ระบุ";
+    if (!saved) console.error(`[Moveout] บันทึกไม่สำเร็จ ห้อง ${roomNums.join(",")} วันที่ ${draft.date}`);
+    await reset();
+    await lineReply(event.replyToken, [{ type: "text", text: unchanged.length === roomNums.length
+      ? `ห้อง ${roomNums.join(", ")} มีรายการแจ้งย้ายออกวันที่ ${dateTxt} อยู่แล้วค่ะ ไม่ต้องแจ้งซ้ำนะคะ 😊`
+      : buildMoveoutTenantMessage(roomNums, draft.date) }]);
+    // แจ้งกลุ่มแม่บ้าน: เฉพาะห้อง + วันที่ (ไม่ใส่ชื่อ/ค่าใช้จ่าย)
+    if (LINE_GROUP) {
+      if (created.length) linePush(LINE_GROUP, [{ type: "text", text: `📦 แจ้งย้ายออก\n🏠 ห้อง ${created.join(", ")}\n📅 ย้ายออกวันที่ ${dateTxt}\n\nเตรียมตรวจห้องด้วยนะคะ` }]).catch(e => console.error("[Moveout group]", e.message));
+      if (changed.length) linePush(LINE_GROUP, [{ type: "text", text: `🔄 เปลี่ยนวันย้ายออก\n🏠 ห้อง ${changed.join(", ")}\n📅 วันใหม่: ${dateTxt}` }]).catch(e => console.error("[Moveout group]", e.message));
+    }
+    // แจ้งแอดมินเสมอ (แม้บันทึกคอนโซลไม่สำเร็จ จะได้ไม่หลุด)
+    if (ADMIN_USER && (created.length || changed.length || !saved)) {
+      linePush(ADMIN_USER, [{ type: "text", text: `📦 ${changed.length && !created.length ? "เปลี่ยนวัน" : "แจ้ง"}ย้ายออก${changed.length && !created.length ? "" : "ใหม่"}\n🏠 ห้อง ${roomNums.join(", ")} — ${tenantName}\n📅 ${dateTxt}` +
+        (saved ? "\n\nดูได้ที่ Billing Console → แจ้งย้ายออก" : "\n\n⚠️ บันทึกลงคอนโซลไม่สำเร็จ กรุณาจดไว้ก่อน") }]).catch(() => {});
+    }
+    return;
+  }
 }
 
 async function handleImageMessage(event) {
@@ -886,6 +986,8 @@ async function handlePostback(event) {
     await lineReply(event.replyToken, [{ type: "text", text: "✅ ระบบกลับมาใช้ OA หลักแล้ว" }]);
     return;
   }
+
+  if (data.startsWith("action=MOVEOUT_")) { await handleMoveoutPostback(event, data, users, rooms, user); return; }
 
   if (data === "action=CHECK_RENT") {
   const myRooms = Object.values(rooms).filter(r => r.lineUserId === userId);
@@ -1746,11 +1848,18 @@ app.post("/api/test-reminder", adminAuth, async (req, res) => {
 app.get("/api/doc-requests",     adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "doc-requests.json"), [])); });
 app.get("/api/contact-logs",     adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "contact-logs.json"), [])); });
 app.get("/api/moveout-requests", adminAuth, async (req, res) => { res.json(await loadMoveouts()); });
-// แอดมินแจ้งย้ายออกแทนผู้เช่า (เช่น ผู้เช่าแจ้งทางโทรศัพท์/ต่อหน้า)
+// ช่วงวันที่ย้ายออกที่เลือกได้ (ใช้จำกัดปฏิทินในฟอร์มแอดมิน)
+app.get("/api/moveout-range", adminAuth, (req, res) => { res.json(moveoutDateRange()); });
+
+// แอดมินแจ้งย้ายออกแทนผู้เช่า (เช่น ผู้เช่าแจ้งทางโทรศัพท์/ต่อหน้า) — ใช้กฎช่วงวันที่เดียวกับผู้เช่า
 app.post("/api/moveout-requests", adminAuth, async (req, res) => {
   const { roomNumber, moveoutDate, note, notifyGroup, notifyTenant } = req.body || {};
   const rn = String(roomNumber || "").trim();
   if (!isValidIsoDate(moveoutDate)) return res.status(400).json({ error: "วันที่ย้ายออกไม่ถูกต้อง" });
+  if (!isMoveoutDateInRange(moveoutDate)) {
+    const { min, max } = moveoutDateRange();
+    return res.status(400).json({ error: `วันที่ย้ายออกต้องอยู่ระหว่าง ${formatThaiDateShort(min)} ถึง ${formatThaiDateShort(max)} (ล่วงหน้าอย่างน้อย 1 เดือน)` });
+  }
   const rooms = await loadRooms();
   const room = rooms[rn];
   if (!room) return res.status(404).json({ error: `ไม่พบห้อง ${rn}` });
@@ -1795,10 +1904,20 @@ app.patch("/api/moveout-requests/:idx", adminAuth, async (req, res) => {
     const uid = rooms[roomNum]?.lineUserId || logs[idx].userId;
     if (uid) linePush(uid, [{ type: "text", text: `✅ รับทราบการแจ้งย้ายออกห้อง ${roomNum} แล้วค่ะ\n\nเจ้าหน้าที่จะติดต่อเพื่อนัดตรวจสอบห้องและดำเนินการต่อไปค่ะ 😊` }]).catch(() => {});
   } else if (status === "completed") {
-    // ปิดงาน (เรียกเก็บครบแล้ว) → ล้าง LINE ID ของห้อง เฉพาะเมื่อยังเป็นของผู้เช่าที่แจ้งย้ายออก
+    // ย้ายออกแล้ว → ล้าง LINE ID ของห้อง (เฉพาะถ้ายังเป็นของผู้เช่าที่แจ้งย้ายออก) + แจ้งกลุ่มแม่บ้านว่าพร้อมทำความสะอาด
     const rooms = await loadRooms();
     const r = rooms[roomNum];
-    if (r && r.lineUserId && (!logs[idx].userId || r.lineUserId === logs[idx].userId)) { r.lineUserId = ""; await saveRooms(rooms); }
+    if (r && r.lineUserId && (!logs[idx].userId || r.lineUserId === logs[idx].userId)) {
+      const oldId = r.lineUserId; r.lineUserId = ""; await saveRooms(rooms);
+      const users = await loadUsers();
+      if (users[oldId]) {
+        const remain = roomsOfUser(rooms, oldId, {});
+        if (remain.length) users[oldId].roomNumber = remain[0];          // ยังมีห้องอื่นอยู่ → คงการลงทะเบียนไว้
+        else { users[oldId].state = "WAIT_FLOOR"; users[oldId].roomNumber = null; }
+        await saveUsers(users);
+      }
+    }
+    if (LINE_GROUP) linePush(LINE_GROUP, [{ type: "text", text: `✅ ห้อง ${roomNum} ย้ายออกแล้ว\nพร้อมทำความสะอาดค่ะ` }]).catch(e => console.error("[Moveout group]", e.message));
   }
   res.json({ ok: true });
 });
