@@ -43,9 +43,46 @@ function formatThaiDateShort(str) {
   return `${d} ${THAI_MONTHS_SHORT[mo - 1]} ${y + 543}`;
 }
 
-// ข้อความตอบผู้เช่า (LINE) เมื่อรับแจ้งย้ายออก — เช็กลิสต์สิ่งที่ต้องเตรียม
-function buildMoveoutTenantMessage(roomNum, isoDate) {
-  return `📦 รับแจ้งย้ายออกแล้วค่ะ\n\n🏠 ห้อง: ${roomNum}\n📅 วันที่ย้ายออก: ${formatThaiDateShort(isoDate)}\n\n` +
+// ─── flow แจ้งย้ายออกผ่าน LINE ─────────────────────────────────
+const MOVEOUT_KEYWORDS = ["แจ้งออก", "ย้ายออก", "เลิกเช่า", "คืนห้อง", "สิ้นสัญญา", "ไม่ต่อสัญญา", "ยกเลิกสัญญา", "ออกจากห้อง", "แจ้งย้าย", "ไม่เช่าต่อ"];
+const MOVEOUT_NEGATIVE = /ใบเสร็จ|บิล|ใบแจ้ง|ใบกำกับ|เอกสาร|ค่าน้ำ|ค่าไฟ/;
+
+// ข้อความที่ผู้เช่าพิมพ์เพื่อขอแจ้งย้ายออกหรือไม่ (ข้อความสั้น + ไม่ใช่เรื่องเอกสาร/บิล)
+function isMoveoutKeyword(text) {
+  const t = String(text || "").replace(/\s+/g, "");
+  if (!t || t.length > 80 || MOVEOUT_NEGATIVE.test(t)) return false;
+  return MOVEOUT_KEYWORDS.some(k => t.includes(k));
+}
+
+// เลือกห้องจากข้อความ: "ทุกห้อง/ทั้งหมด/ทั้งสอง" → ทุกห้อง, ระบุเลขห้องเดียว → ห้องนั้น, ไม่ชัด → null
+function pickRoomsFromText(text, roomNums) {
+  const t = String(text || "");
+  if (/ทุกห้อง|ทั้งหมด|ทั้งสอง/.test(t)) return roomNums.slice();
+  const one = pickMentionedRoom(t, roomNums);
+  return one ? [one] : null;
+}
+
+// วันที่ปัจจุบันตามเวลาไทย (YYYY-MM-DD)
+function bangkokTodayIso(now = Date.now()) { return new Date(now + 7 * 3600 * 1000).toISOString().slice(0, 10); }
+function addDaysIso(iso, n) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+// วันย้ายออกที่เลือกได้: ตั้งแต่พรุ่งนี้ ถึง +90 วัน
+function moveoutDateRange(now = Date.now()) {
+  const today = bangkokTodayIso(now);
+  return { min: addDaysIso(today, 1), max: addDaysIso(today, 90) };
+}
+function isMoveoutDateInRange(iso, now = Date.now()) {
+  if (!isValidIsoDate(iso)) return false;
+  const { min, max } = moveoutDateRange(now);
+  return iso >= min && iso <= max;
+}
+
+// ข้อความตอบผู้เช่า (LINE) เมื่อรับแจ้งย้ายออก — เช็กลิสต์สิ่งที่ต้องเตรียม (รับเลขห้องเดียวหรือหลายห้อง)
+function buildMoveoutTenantMessage(roomNums, isoDate) {
+  const rooms = [].concat(roomNums).join(", ");
+  return `📦 รับแจ้งย้ายออกแล้วค่ะ\n\n🏠 ห้อง: ${rooms}\n📅 วันที่ย้ายออก: ${formatThaiDateShort(isoDate)}\n\n` +
     `กรุณาเตรียมการดังนี้ค่ะ\n` +
     `1️⃣ เตรียมห้องให้พร้อมสำหรับตรวจห้อง\n` +
     `2️⃣ คืนกุญแจ / คีย์การ์ด\n` +
@@ -53,4 +90,8 @@ function buildMoveoutTenantMessage(roomNum, isoDate) {
     `เจ้าหน้าที่จะติดต่อกลับเพื่อนัดตรวจห้องค่ะ 😊`;
 }
 
-module.exports = { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort, buildMoveoutTenantMessage };
+module.exports = {
+  roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort,
+  isMoveoutKeyword, pickRoomsFromText, bangkokTodayIso, addDaysIso, moveoutDateRange, isMoveoutDateInRange,
+  buildMoveoutTenantMessage,
+};
