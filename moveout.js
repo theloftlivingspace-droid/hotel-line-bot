@@ -26,4 +26,85 @@ function resolveMoveoutRoom({ text, roomNums, selected, profileRoom }) {
   return profileRoom || roomNums[0] || null;
 }
 
-module.exports = { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom };
+const THAI_MONTHS_SHORT = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+
+// วันที่รูปแบบ YYYY-MM-DD ที่เป็นวันจริง (กัน 2026-02-31)
+function isValidIsoDate(str) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(str || ""));
+  if (!m) return false;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
+}
+
+// "2026-11-15" → "15 พ.ย. 2569"
+function formatThaiDateShort(str) {
+  if (!isValidIsoDate(str)) return String(str || "");
+  const [y, mo, d] = str.split("-").map(Number);
+  return `${d} ${THAI_MONTHS_SHORT[mo - 1]} ${y + 543}`;
+}
+
+// ─── flow แจ้งย้ายออกผ่าน LINE ─────────────────────────────────
+const MOVEOUT_KEYWORDS = ["แจ้งออก", "ย้ายออก", "เลิกเช่า", "คืนห้อง", "สิ้นสัญญา", "ไม่ต่อสัญญา", "ยกเลิกสัญญา", "ออกจากห้อง", "แจ้งย้าย", "ไม่เช่าต่อ"];
+const MOVEOUT_NEGATIVE = /ใบเสร็จ|บิล|ใบแจ้ง|ใบกำกับ|เอกสาร|ค่าน้ำ|ค่าไฟ/;
+
+// ข้อความที่ผู้เช่าพิมพ์เพื่อขอแจ้งย้ายออกหรือไม่ (ข้อความสั้น + ไม่ใช่เรื่องเอกสาร/บิล)
+function isMoveoutKeyword(text) {
+  const t = String(text || "").replace(/\s+/g, "");
+  if (!t || t.length > 80 || MOVEOUT_NEGATIVE.test(t)) return false;
+  return MOVEOUT_KEYWORDS.some(k => t.includes(k));
+}
+
+// เลือกห้องจากข้อความ: "ทุกห้อง/ทั้งหมด/ทั้งสอง" → ทุกห้อง, ระบุเลขห้องเดียว → ห้องนั้น, ไม่ชัด → null
+function pickRoomsFromText(text, roomNums) {
+  const t = String(text || "");
+  if (/ทุกห้อง|ทั้งหมด|ทั้งสอง/.test(t)) return roomNums.slice();
+  const one = pickMentionedRoom(t, roomNums);
+  return one ? [one] : null;
+}
+
+// วันที่ปัจจุบันตามเวลาไทย (YYYY-MM-DD)
+function bangkokTodayIso(now = Date.now()) { return new Date(now + 7 * 3600 * 1000).toISOString().slice(0, 10); }
+function addDaysIso(iso, n) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+// บวกเดือนแบบปฏิทิน (31 ม.ค. + 1 เดือน → 28/29 ก.พ.)
+function addMonthsIso(iso, n) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1 + n, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), Math.min(d, last))).toISOString().slice(0, 10);
+}
+function endOfMonthIso(iso) {
+  const [y, m] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+// กฎสัญญา: แจ้งล่วงหน้าอย่างน้อย 1 เดือน, ย้ายออกไม่เกินสิ้นเดือน, และเลือกล่วงหน้าได้ไม่เกิน 3 เดือน
+// → เลือกได้ตั้งแต่ "วันนี้ + 1 เดือน" ถึง "สิ้นเดือนของวันนี้ + 3 เดือน"
+//   (เช่น วันนี้ 6 พ.ย. 2569 → 6 ธ.ค. 2569 ถึง 28 ก.พ. 2570) — ใช้ร่วมกันทั้งผู้เช่า (LINE) และแอดมิน (คอนโซล)
+function moveoutDateRange(now = Date.now()) {
+  const today = bangkokTodayIso(now);
+  return { min: addMonthsIso(today, 1), max: endOfMonthIso(addMonthsIso(today, 3)) };
+}
+function isMoveoutDateInRange(iso, now = Date.now()) {
+  if (!isValidIsoDate(iso)) return false;
+  const { min, max } = moveoutDateRange(now);
+  return iso >= min && iso <= max;
+}
+
+// ข้อความตอบผู้เช่า (LINE) เมื่อรับแจ้งย้ายออก — เช็กลิสต์สิ่งที่ต้องเตรียม (รับเลขห้องเดียวหรือหลายห้อง)
+function buildMoveoutTenantMessage(roomNums, isoDate) {
+  const rooms = [].concat(roomNums).join(", ");
+  return `📦 รับแจ้งย้ายออกแล้วค่ะ\n\n🏠 ห้อง: ${rooms}\n📅 วันที่ย้ายออก: ${formatThaiDateShort(isoDate)}\n\n` +
+    `กรุณาเตรียมการดังนี้ค่ะ\n` +
+    `1️⃣ เตรียมห้องให้พร้อมสำหรับตรวจห้อง\n` +
+    `2️⃣ คืนกุญแจ / คีย์การ์ด\n` +
+    `3️⃣ เคลียร์ค่าใช้จ่ายให้เรียบร้อย\n\n` +
+    `เจ้าหน้าที่จะติดต่อกลับเพื่อนัดตรวจห้องค่ะ 😊`;
+}
+
+module.exports = {
+  roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort,
+  isMoveoutKeyword, pickRoomsFromText, bangkokTodayIso, addDaysIso, addMonthsIso, endOfMonthIso, moveoutDateRange, isMoveoutDateInRange,
+  buildMoveoutTenantMessage,
+};

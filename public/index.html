@@ -299,6 +299,19 @@ textarea.input{resize:vertical;line-height:1.7}
     <div class="page" id="page-moveout">
       <div class="page-title">การแจ้งย้ายออก</div>
       <div class="panel">
+        <div class="panel-head"><span>➕ แจ้งย้ายออกแทนผู้เช่า</span></div>
+        <div style="padding:12px 16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          <select id="mo-room" class="input" style="flex:1;min-width:180px"></select>
+          <input id="mo-date" class="input" type="date" style="width:auto">
+          <input id="mo-note" class="input" type="text" placeholder="หมายเหตุ (ถ้ามี)" style="flex:1;min-width:140px">
+          <label style="font-size:13px;display:flex;gap:4px;align-items:center"><input id="mo-notify" type="checkbox" checked>แจ้งกลุ่มแม่บ้าน</label>
+          <label style="font-size:13px;display:flex;gap:4px;align-items:center"><input id="mo-notify-tenant" type="checkbox" checked>แจ้งผู้เช่าทาง LINE</label>
+          <button class="btn btn-primary btn-sm" onclick="submitMoveout()">บันทึก</button>
+        </div>
+        <div id="mo-range" style="padding:0 16px 4px;font-size:12px;color:#64748b"></div>
+        <div id="mo-msg" style="padding:0 16px 12px;font-size:12px;color:#b91c1c"></div>
+      </div>
+      <div class="panel">
         <div class="panel-head"><span>รายการแจ้งย้ายออก</span><button class="btn btn-ghost btn-sm" onclick="loadMoveouts()">รีเฟรช</button></div>
         <div id="moveout-list"><div class="empty">ยังไม่มีการแจ้งย้ายออกค่ะ</div></div>
       </div>
@@ -410,7 +423,7 @@ function showPage(name){
   closeSidebar();
   if(name==="rooms")loadRooms();
   if(name==="payments")loadPayments();
-  if(name==="moveout")loadMoveouts();
+  if(name==="moveout"){renderMoveoutForm();loadMoveouts();}
   if(name==="history"){loadBillHistory();loadLogs();}
   if(name==="bills"){ loadRooms(); checkAndLockSendAllBtn(); }
 }
@@ -898,37 +911,84 @@ async function rejectPayment(id,btn){
 }
 
 const escHtml=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+async function renderMoveoutForm(){
+  const sel=document.getElementById("mo-room");
+  if(!Object.keys(allRooms).length){try{allRooms=await api("/api/rooms");}catch(e){}}
+  try{
+    const r=await api("/api/moveout-range"),di=document.getElementById("mo-date");
+    di.min=r.min;di.max=r.max;
+    if(di.value&&(di.value<r.min||di.value>r.max))di.value="";
+    document.getElementById("mo-range").textContent=`เลือกได้ ${moThaiDate(r.min)} – ${moThaiDate(r.max)} (แจ้งล่วงหน้าอย่างน้อย 1 เดือน เลือกล่วงหน้าได้ไม่เกิน 3 เดือน)`;
+  }catch(e){}
+  const cur=sel.value;
+  const rooms=Object.values(allRooms).filter(r=>r.tenantName||r.lineUserId).sort((a,b)=>String(a.roomNumber).localeCompare(String(b.roomNumber),"th",{numeric:true}));
+  sel.innerHTML='<option value="">เลือกห้อง…</option>'+rooms.map(r=>`<option value="${escHtml(r.roomNumber)}">${escHtml(r.roomNumber)} — ${escHtml(r.tenantName||"ไม่มีชื่อ")}${r.lineUserId?"":" (ยังไม่ผูก LINE)"}</option>`).join("");
+  if(cur)sel.value=cur;
+}
+async function submitMoveout(){
+  const room=document.getElementById("mo-room").value,date=document.getElementById("mo-date").value;
+  const note=document.getElementById("mo-note").value,notify=document.getElementById("mo-notify").checked,notifyT=document.getElementById("mo-notify-tenant").checked;
+  const msg=document.getElementById("mo-msg");msg.textContent="";msg.style.color="#b91c1c";
+  if(!room||!date){msg.textContent="กรุณาเลือกห้องและวันที่ย้ายออก";return;}
+  if(!confirm(`บันทึกแจ้งย้ายออก ห้อง ${room} วันที่ ${date}`+(notify?"\n• ส่งแจ้งกลุ่มแม่บ้าน":"")+(notifyT?"\n• ส่ง LINE แจ้งผู้เช่า":"")+" ?"))return;
+  try{
+    const r=await api("/api/moveout-requests",{method:"POST",body:JSON.stringify({roomNumber:room,moveoutDate:date,note,notifyGroup:notify,notifyTenant:notifyT})});
+    document.getElementById("mo-note").value="";document.getElementById("mo-date").value="";
+    if(r.tenantNotified===true){msg.style.color="#15803d";msg.textContent="บันทึกแล้ว และส่ง LINE แจ้งผู้เช่าแล้ว";}
+    else if(r.tenantNotified==="no_line"){msg.style.color="#b45309";msg.textContent="บันทึกแล้ว แต่ห้องนี้ยังไม่ผูก LINE จึงไม่ได้แจ้งผู้เช่า — โปรดแจ้งทางอื่น";}
+    else if(r.tenantNotified===false){msg.style.color="#b91c1c";msg.textContent="บันทึกแล้ว แต่ส่ง LINE หาผู้เช่าไม่สำเร็จ — โปรดแจ้งทางอื่น";}
+    else{msg.style.color="#15803d";msg.textContent="บันทึกแล้ว";}
+    loadMoveouts();
+  }catch(e){let t=e.message;try{t=JSON.parse(t).error||t;}catch(_){}msg.textContent=t;}
+}
+let moveoutCache=[];
+const moIsOpen=m=>m.status==="pending"||m.status==="confirmed";
+function moDaysUntil(iso){const today=new Date(Date.now()+7*3600*1000).toISOString().slice(0,10);return Math.round((Date.parse(iso)-Date.parse(today))/86400000);}
+function moThaiDate(iso){const M=["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];const [y,m,d]=iso.split("-").map(Number);return `${d} ${M[m-1]} ${y+543}`;}
+function moDueHtml(m){
+  if(!m.moveoutDate)return "";
+  const base=`📅 ย้ายออก ${escHtml(moThaiDate(m.moveoutDate))}`;
+  if(!moIsOpen(m))return `<div style="font-size:12px;color:#64748b;margin-top:3px">${base}</div>`;
+  const d=moDaysUntil(m.moveoutDate);
+  const [txt,col]=d<0?[`เลยกำหนดแล้ว ${-d} วัน`,"#b91c1c"]:d===0?["ย้ายออกวันนี้","#c2410c"]:d<=3?[`อีก ${d} วัน`,"#c2410c"]:[`อีก ${d} วัน`,"#64748b"];
+  return `<div style="font-size:12px;margin-top:3px;font-weight:600;color:${col}">${base} · ${txt}</div>`;
+}
 async function loadMoveouts(){
   const el=document.getElementById("moveout-list");
   try{
     const list=await api("/api/moveout-requests");
-    const pending=list.filter(m=>m.status==="pending");
+    moveoutCache=list;
+    const open=list.filter(moIsOpen);
     const badge=document.getElementById("badge-moveout");
-    if(pending.length){badge.textContent=pending.length;badge.classList.remove("hidden");}else badge.classList.add("hidden");
+    if(open.length){badge.textContent=open.length;badge.classList.remove("hidden");}else badge.classList.add("hidden");
     if(!list.length){el.innerHTML='<div class="empty">ยังไม่มีการแจ้งย้ายออกค่ะ</div>';return;}
-    el.innerHTML=list.map((m,i)=>`
+    const rows=list.map((m,i)=>({m,i})).sort((a,b)=>{
+      const ao=moIsOpen(a.m)?0:1,bo=moIsOpen(b.m)?0:1;if(ao!==bo)return ao-bo;
+      if(ao===0){const ad=a.m.moveoutDate||"9999",bd=b.m.moveoutDate||"9999";return ad<bd?-1:ad>bd?1:0;}
+      return new Date(b.m.date)-new Date(a.m.date);
+    });
+    el.innerHTML=rows.map(({m,i})=>`
       <div style="padding:12px 16px;border-bottom:1px solid #f1f5f9;display:flex;gap:12px;align-items:flex-start">
         <div style="flex:1">
           <div style="font-size:13px;font-weight:600">ห้อง ${escHtml(m.roomNumber)} — ${escHtml(m.tenantName||"—")}</div>
+          ${moDueHtml(m)}
           <div style="font-size:12px;color:#374151;margin-top:3px;line-height:1.6">${escHtml(m.moveoutDetail)}</div>
-          <div style="font-size:11px;color:#94a3b8;margin-top:2px">${new Date(m.date).toLocaleString("th-TH")}</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px">แจ้งเมื่อ ${new Date(m.date).toLocaleString("th-TH")}${m.source==="admin"?" · แอดมินแจ้งแทน":""}</div>
         </div>
         <div style="display:flex;gap:5px;flex-shrink:0;align-items:center">
-          ${m.status==="pending"?`
-            <button class="btn btn-primary btn-sm" onclick="confirmMoveout(${i})">✅ ยืนยัน</button>
+          ${moIsOpen(m)?`
+            <button class="btn btn-primary btn-sm" onclick="movedOut(${i})">✅ ย้ายออกแล้ว</button>
             <button class="btn btn-ghost btn-sm" onclick="rejectMoveout(${i})">ยกเลิก</button>
-          `:m.status==="confirmed"?`<span class="pill pill-green">ยืนยันแล้ว</span><button class="btn btn-ghost btn-sm" onclick="completeMoveout(${i})">🏁 ปิดงาน</button>`:`<span class="pill pill-gray">${m.status==="completed"?"ปิดงานแล้ว":"ยกเลิก"}</span>`}
+          `:`<span class="pill ${m.status==="completed"?"pill-green":"pill-gray"}">${m.status==="completed"?"ย้ายออกแล้ว":"ยกเลิก"}</span>`}
         </div>
       </div>`).join("");
-  }catch(e){el.innerHTML=`<div class="empty" style="color:#b91c1c">${e.message}</div>`;}
+  }catch(e){el.innerHTML=`<div class="empty" style="color:#b91c1c">${escHtml(e.message)}</div>`;}
 }
-async function confirmMoveout(idx){
-  if(!confirm("ยืนยันการแจ้งย้ายออก?\nระบบจะแจ้งผู้เช่าว่ารับทราบแล้ว (ยังไม่ล้าง LINE User ID — กด 🏁 ปิดงาน ตอนเรียกเก็บค่าใช้จ่ายเสร็จ)"))return;
-  await api(`/api/moveout-requests/${idx}`,{method:"PATCH",body:JSON.stringify({status:"confirmed"})});
-  loadMoveouts();loadRooms();
-}
-async function completeMoveout(idx){
-  if(!confirm("ปิดงานย้ายออก?\nระบบจะล้าง LINE User ID ของห้องนี้ (ผู้เช่าจะไม่ได้รับข้อความจากระบบอีก) — กดต่อเมื่อเรียกเก็บค่าใช้จ่ายครบแล้ว"))return;
+async function movedOut(idx){
+  const m=moveoutCache[idx];if(!m)return;
+  let warn="";
+  if(m.moveoutDate&&moDaysUntil(m.moveoutDate)>0)warn=`\n\n⚠️ ยังไม่ถึงวันย้ายออก (${moThaiDate(m.moveoutDate)}) — ยืนยันว่าผู้เช่าย้ายออกแล้วจริง`;
+  if(!confirm(`ยืนยันว่าห้อง ${m.roomNumber} ย้ายออกแล้ว?\nระบบจะล้าง LINE User ID ของห้องนี้ และแจ้งกลุ่มแม่บ้านว่าพร้อมทำความสะอาด\n(กดต่อเมื่อตรวจห้อง รับกุญแจ และเรียกเก็บค่าใช้จ่ายครบแล้ว)`+warn))return;
   await api(`/api/moveout-requests/${idx}`,{method:"PATCH",body:JSON.stringify({status:"completed"})});
   loadMoveouts();loadRooms();
 }
