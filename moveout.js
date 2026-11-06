@@ -26,4 +26,21 @@ function resolveMoveoutRoom({ text, roomNums, selected, profileRoom }) {
   return profileRoom || roomNums[0] || null;
 }
 
-module.exports = { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom };
+const THAI_MONTHS_SHORT = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+
+// วันที่รูปแบบ YYYY-MM-DD ที่เป็นวันจริง (กัน 2026-02-31)
+function isValidIsoDate(str) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(str || ""));
+  if (!m) return false;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
+}
+
+// "2026-11-15" → "15 พ.ย. 2569"
+function formatThaiDateShort(str) {
+  if (!isValidIsoDate(str)) return String(str || "");
+  const [y, mo, d] = str.split("-").map(Number);
+  return `${d} ${THAI_MONTHS_SHORT[mo - 1]} ${y + 543}`;
+}
+
+module.exports = { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort };

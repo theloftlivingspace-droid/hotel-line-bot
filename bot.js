@@ -263,7 +263,7 @@ async function redisDel(key) {
 }
 
 // ─── File helpers (fallback) ────────────────────────────────────
-const { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom } = require("./moveout.js");
+const { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort } = require("./moveout.js");
 const DATA_DIR      = path.join(__dirname, "data");
 const ROOMS_FILE    = path.join(DATA_DIR, "rooms.json");
 const USERS_FILE    = path.join(DATA_DIR, "users.json");
@@ -306,7 +306,7 @@ async function loadMoveouts() {
 async function saveMoveouts(list) {
   const trimmed = list.slice(0, 200);
   saveJSON(MOVEOUT_FILE, trimmed);
-  if (!REDIS_URL) return false;
+  if (!REDIS_URL) return true; // ไม่ได้ตั้ง Redis (รันในเครื่อง) → ไฟล์คือที่เก็บหลัก
   try {
     // POST แทน GET /set/... — ข้อความไทยที่ถูก encode ยาวเกินขีดจำกัด URL ได้
     const res = await fetch(`${REDIS_URL}/pipeline`, {
@@ -1746,6 +1746,31 @@ app.post("/api/test-reminder", adminAuth, async (req, res) => {
 app.get("/api/doc-requests",     adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "doc-requests.json"), [])); });
 app.get("/api/contact-logs",     adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "contact-logs.json"), [])); });
 app.get("/api/moveout-requests", adminAuth, async (req, res) => { res.json(await loadMoveouts()); });
+// แอดมินแจ้งย้ายออกแทนผู้เช่า (เช่น ผู้เช่าแจ้งทางโทรศัพท์/ต่อหน้า)
+app.post("/api/moveout-requests", adminAuth, async (req, res) => {
+  const { roomNumber, moveoutDate, note, notifyGroup } = req.body || {};
+  const rn = String(roomNumber || "").trim();
+  if (!isValidIsoDate(moveoutDate)) return res.status(400).json({ error: "วันที่ย้ายออกไม่ถูกต้อง" });
+  const rooms = await loadRooms();
+  const room = rooms[rn];
+  if (!room) return res.status(404).json({ error: `ไม่พบห้อง ${rn}` });
+  const logs = await loadMoveouts();
+  if (logs.some(m => String(m.roomNumber) === rn && ["pending", "confirmed"].includes(m.status))) {
+    return res.status(409).json({ error: `ห้อง ${rn} มีรายการแจ้งย้ายออกค้างอยู่แล้ว (ยกเลิกรายการเดิมก่อนถ้าต้องการแก้วัน)` });
+  }
+  const extra = String(note || "").trim().slice(0, 300);
+  const record = {
+    date: new Date().toISOString(), roomNumber: rn, tenantName: room.tenantName || "ไม่ระบุ", userId: room.lineUserId || "",
+    moveoutDate, moveoutDetail: `ห้อง ${rn} ย้ายออกวันที่ ${formatThaiDateShort(moveoutDate)}` + (extra ? ` (${extra})` : ""),
+    status: "pending", source: "admin",
+  };
+  logs.unshift(record);
+  if (!(await saveMoveouts(logs))) return res.status(500).json({ error: "บันทึกลง Redis ไม่สำเร็จ ลองใหม่อีกครั้ง" });
+  if (notifyGroup && LINE_GROUP) {
+    linePush(LINE_GROUP, [{ type: "text", text: `📦 แจ้งย้ายออก\n🏠 ห้อง ${rn}\n📅 ย้ายออกวันที่ ${formatThaiDateShort(moveoutDate)}\n\nเตรียมตรวจห้องด้วยนะคะ` }]).catch(() => {});
+  }
+  res.json({ ok: true, record });
+});
 app.patch("/api/moveout-requests/:idx", adminAuth, async (req, res) => {
   const idx = parseInt(req.params.idx), { status } = req.body;
   if (!["pending", "confirmed", "rejected", "completed"].includes(status)) return res.status(400).json({ error: "invalid status" });

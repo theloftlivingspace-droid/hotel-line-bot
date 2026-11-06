@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom } = require("../moveout.js");
+const { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort } = require("../moveout.js");
 
 const rooms = { 202: { lineUserId: "U1" }, 406: { lineUserId: "U1" }, 113: { lineUserId: "U2" } };
 assert.deepStrictEqual(roomsOfUser(rooms, "U1", {}).sort(), ["202", "406"]);
@@ -19,5 +19,13 @@ assert.strictEqual(resolveMoveoutRoom({ ...base, text: "ย้ายออก 15
 assert.strictEqual(resolveMoveoutRoom({ ...base, text: "ย้ายออก 15 พ.ย.2569", selected: null }), "406");
 assert.strictEqual(resolveMoveoutRoom({ roomNums: ["202"], text: "x", selected: "999", profileRoom: "202" }), "202");
 assert.strictEqual(resolveMoveoutRoom({ roomNums: [], text: "x", selected: null, profileRoom: null }), null);
+
+assert.strictEqual(isValidIsoDate("2026-11-15"), true);
+assert.strictEqual(isValidIsoDate("2026-02-31"), false);
+assert.strictEqual(isValidIsoDate("15/11/2026"), false);
+assert.strictEqual(isValidIsoDate(""), false);
+assert.strictEqual(formatThaiDateShort("2026-11-15"), "15 พ.ย. 2569");
+assert.strictEqual(formatThaiDateShort("2026-01-05"), "5 ม.ค. 2569");
+assert.strictEqual(formatThaiDateShort("bad"), "bad");
 
 console.log("moveout tests OK");
