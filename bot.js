@@ -825,10 +825,10 @@ function moveoutRoomPicker(roomNums) {
     ] },
   };
 }
-// ปุ่มเลือกวันของ LINE (datetimepicker): ล่วงหน้า ≥ 1 เดือน และไม่เกินสิ้นเดือนนั้น
+// ปุ่มเลือกวันของ LINE (datetimepicker): ปฏิทินจำกัดเฉพาะช่วงที่เลือกได้ (moveoutDateRange)
 function moveoutDatePicker(draft, hint) {
   const { min, max } = moveoutDateRange();
-  const rule = `ตามสัญญา ต้องแจ้งล่วงหน้าอย่างน้อย 1 เดือน และย้ายออกไม่เกินสิ้นเดือน\nเลือกได้ตั้งแต่ ${formatThaiDateShort(min)} ถึง ${formatThaiDateShort(max)} ค่ะ`;
+  const rule = `ตามสัญญา ต้องแจ้งล่วงหน้าอย่างน้อย 1 เดือน\nเลือกวันย้ายออกได้ตั้งแต่ ${formatThaiDateShort(min)} ถึง ${formatThaiDateShort(max)} ค่ะ`;
   return {
     type: "text",
     text: `📦 แจ้งย้ายออก ห้อง ${draft.rooms.join(", ")}\n\n${rule}\n\n${hint || "กดปุ่ม 📅 เลือกวันที่ ด้านล่างได้เลยค่ะ 👇"}`,
@@ -1848,11 +1848,18 @@ app.post("/api/test-reminder", adminAuth, async (req, res) => {
 app.get("/api/doc-requests",     adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "doc-requests.json"), [])); });
 app.get("/api/contact-logs",     adminAuth, (req, res) => { res.json(loadJSON(path.join(DATA_DIR, "contact-logs.json"), [])); });
 app.get("/api/moveout-requests", adminAuth, async (req, res) => { res.json(await loadMoveouts()); });
-// แอดมินแจ้งย้ายออกแทนผู้เช่า (เช่น ผู้เช่าแจ้งทางโทรศัพท์/ต่อหน้า)
+// ช่วงวันที่ย้ายออกที่เลือกได้ (ใช้จำกัดปฏิทินในฟอร์มแอดมิน)
+app.get("/api/moveout-range", adminAuth, (req, res) => { res.json(moveoutDateRange()); });
+
+// แอดมินแจ้งย้ายออกแทนผู้เช่า (เช่น ผู้เช่าแจ้งทางโทรศัพท์/ต่อหน้า) — ใช้กฎช่วงวันที่เดียวกับผู้เช่า
 app.post("/api/moveout-requests", adminAuth, async (req, res) => {
   const { roomNumber, moveoutDate, note, notifyGroup, notifyTenant } = req.body || {};
   const rn = String(roomNumber || "").trim();
   if (!isValidIsoDate(moveoutDate)) return res.status(400).json({ error: "วันที่ย้ายออกไม่ถูกต้อง" });
+  if (!isMoveoutDateInRange(moveoutDate)) {
+    const { min, max } = moveoutDateRange();
+    return res.status(400).json({ error: `วันที่ย้ายออกต้องอยู่ระหว่าง ${formatThaiDateShort(min)} ถึง ${formatThaiDateShort(max)} (ล่วงหน้าอย่างน้อย 1 เดือน)` });
+  }
   const rooms = await loadRooms();
   const room = rooms[rn];
   if (!room) return res.status(404).json({ error: `ไม่พบห้อง ${rn}` });

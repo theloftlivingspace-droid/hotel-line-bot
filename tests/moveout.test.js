@@ -48,24 +48,20 @@ const NOW = Date.UTC(2026, 10, 6, 20, 0, 0);
 assert.strictEqual(bangkokTodayIso(NOW), "2026-11-07");
 assert.strictEqual(addDaysIso("2026-11-30", 1), "2026-12-01");
 assert.strictEqual(addDaysIso("2026-12-31", 1), "2027-01-01");
-// กฎสัญญา: ล่วงหน้า ≥ 1 เดือน + ไม่เกินสิ้นเดือน (วันนี้ไทย = 7 พ.ย. 2026 → 7–31 ธ.ค.)
-assert.deepStrictEqual(moveoutDateRange(NOW), { min: "2026-12-07", max: "2026-12-31" });
-assert.strictEqual(isMoveoutDateInRange("2026-12-15", NOW), true);
-assert.strictEqual(isMoveoutDateInRange("2026-12-07", NOW), true);
-assert.strictEqual(isMoveoutDateInRange("2026-12-31", NOW), true);
-assert.strictEqual(isMoveoutDateInRange("2026-12-06", NOW), false);  // ไม่ครบ 1 เดือน
-assert.strictEqual(isMoveoutDateInRange("2026-11-30", NOW), false);  // ไม่ครบ 1 เดือน
-assert.strictEqual(isMoveoutDateInRange("2027-01-01", NOW), false);  // เกินสิ้นเดือน
-// ตัวอย่างจริง: แจ้ง 9 ต.ค. 2026 → 9–30 พ.ย.
+// กฎสัญญา: ล่วงหน้า ≥ 1 เดือน, เลือกได้ไม่เกินสิ้นเดือนของ +3 เดือน (วันนี้ไทย = 7 พ.ย. 2026 → 7 ธ.ค. – 28 ก.พ. 2027)
+assert.deepStrictEqual(moveoutDateRange(NOW), { min: "2026-12-07", max: "2027-02-28" });
+for (const d of ["2026-12-07", "2026-12-31", "2027-01-15", "2027-02-28"]) assert.strictEqual(isMoveoutDateInRange(d, NOW), true, d);
+for (const d of ["2026-12-06", "2026-11-30", "2026-11-15", "2027-03-01"]) assert.strictEqual(isMoveoutDateInRange(d, NOW), false, d);
+// ตัวอย่างจริง: แจ้ง 9 ต.ค. 2026 → 9 พ.ย. – 31 ม.ค. 2027
 const OCT9 = Date.UTC(2026, 9, 9, 5, 0, 0);
-assert.deepStrictEqual(moveoutDateRange(OCT9), { min: "2026-11-09", max: "2026-11-30" });
+assert.deepStrictEqual(moveoutDateRange(OCT9), { min: "2026-11-09", max: "2027-01-31" });
 assert.strictEqual(isMoveoutDateInRange("2026-11-15", OCT9), true);
 // ขอบเดือน
 assert.strictEqual(addMonthsIso("2027-01-31", 1), "2027-02-28");
 assert.strictEqual(addMonthsIso("2028-01-31", 1), "2028-02-29");
 assert.strictEqual(addMonthsIso("2026-12-15", 1), "2027-01-15");
 assert.strictEqual(endOfMonthIso("2026-02-10"), "2026-02-28");
-assert.deepStrictEqual(moveoutDateRange(Date.UTC(2026, 9, 31, 5, 0, 0)), { min: "2026-11-30", max: "2026-11-30" });
+assert.deepStrictEqual(moveoutDateRange(Date.UTC(2026, 9, 31, 5, 0, 0)), { min: "2026-11-30", max: "2027-01-31" });
 assert.strictEqual(isMoveoutDateInRange("garbage", NOW), false);
 assert.ok(buildMoveoutTenantMessage(["202", "406"], "2026-11-15").includes("ห้อง: 202, 406"));
 

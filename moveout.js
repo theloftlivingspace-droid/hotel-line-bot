@@ -79,11 +79,12 @@ function endOfMonthIso(iso) {
   const [y, m] = iso.split("-").map(Number);
   return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
 }
-// กฎสัญญา: แจ้งล่วงหน้าอย่างน้อย 1 เดือน และต้องย้ายออกไม่เกินวันสิ้นเดือน
-// → เลือกได้ตั้งแต่ "วันนี้ + 1 เดือน" ถึง "สิ้นเดือนของวันนั้น" (เช่น แจ้ง 9 ต.ค. → 9–30 พ.ย.)
+// กฎสัญญา: แจ้งล่วงหน้าอย่างน้อย 1 เดือน, ย้ายออกไม่เกินสิ้นเดือน, และเลือกล่วงหน้าได้ไม่เกิน 3 เดือน
+// → เลือกได้ตั้งแต่ "วันนี้ + 1 เดือน" ถึง "สิ้นเดือนของวันนี้ + 3 เดือน"
+//   (เช่น วันนี้ 6 พ.ย. 2569 → 6 ธ.ค. 2569 ถึง 28 ก.พ. 2570) — ใช้ร่วมกันทั้งผู้เช่า (LINE) และแอดมิน (คอนโซล)
 function moveoutDateRange(now = Date.now()) {
-  const min = addMonthsIso(bangkokTodayIso(now), 1);
-  return { min, max: endOfMonthIso(min) };
+  const today = bangkokTodayIso(now);
+  return { min: addMonthsIso(today, 1), max: endOfMonthIso(addMonthsIso(today, 3)) };
 }
 function isMoveoutDateInRange(iso, now = Date.now()) {
   if (!isValidIsoDate(iso)) return false;

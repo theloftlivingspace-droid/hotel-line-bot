@@ -308,6 +308,7 @@ textarea.input{resize:vertical;line-height:1.7}
           <label style="font-size:13px;display:flex;gap:4px;align-items:center"><input id="mo-notify-tenant" type="checkbox" checked>แจ้งผู้เช่าทาง LINE</label>
           <button class="btn btn-primary btn-sm" onclick="submitMoveout()">บันทึก</button>
         </div>
+        <div id="mo-range" style="padding:0 16px 4px;font-size:12px;color:#64748b"></div>
         <div id="mo-msg" style="padding:0 16px 12px;font-size:12px;color:#b91c1c"></div>
       </div>
       <div class="panel">
@@ -913,6 +914,12 @@ const escHtml=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&
 async function renderMoveoutForm(){
   const sel=document.getElementById("mo-room");
   if(!Object.keys(allRooms).length){try{allRooms=await api("/api/rooms");}catch(e){}}
+  try{
+    const r=await api("/api/moveout-range"),di=document.getElementById("mo-date");
+    di.min=r.min;di.max=r.max;
+    if(di.value&&(di.value<r.min||di.value>r.max))di.value="";
+    document.getElementById("mo-range").textContent=`เลือกได้ ${moThaiDate(r.min)} – ${moThaiDate(r.max)} (แจ้งล่วงหน้าอย่างน้อย 1 เดือน เลือกล่วงหน้าได้ไม่เกิน 3 เดือน)`;
+  }catch(e){}
   const cur=sel.value;
   const rooms=Object.values(allRooms).filter(r=>r.tenantName||r.lineUserId).sort((a,b)=>String(a.roomNumber).localeCompare(String(b.roomNumber),"th",{numeric:true}));
   sel.innerHTML='<option value="">เลือกห้อง…</option>'+rooms.map(r=>`<option value="${escHtml(r.roomNumber)}">${escHtml(r.roomNumber)} — ${escHtml(r.tenantName||"ไม่มีชื่อ")}${r.lineUserId?"":" (ยังไม่ผูก LINE)"}</option>`).join("");
