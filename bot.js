@@ -825,12 +825,13 @@ function moveoutRoomPicker(roomNums) {
     ] },
   };
 }
-// ปุ่มเลือกวันของ LINE (datetimepicker): ตั้งแต่พรุ่งนี้ถึง +90 วัน
+// ปุ่มเลือกวันของ LINE (datetimepicker): ล่วงหน้า ≥ 1 เดือน และไม่เกินสิ้นเดือนนั้น
 function moveoutDatePicker(draft, hint) {
   const { min, max } = moveoutDateRange();
+  const rule = `ตามสัญญา ต้องแจ้งล่วงหน้าอย่างน้อย 1 เดือน และย้ายออกไม่เกินสิ้นเดือน\nเลือกได้ตั้งแต่ ${formatThaiDateShort(min)} ถึง ${formatThaiDateShort(max)} ค่ะ`;
   return {
     type: "text",
-    text: `📦 แจ้งย้ายออก ห้อง ${draft.rooms.join(", ")}\n\n${hint || "กดปุ่ม 📅 เลือกวันที่ ด้านล่างเพื่อเลือกวันที่ต้องการย้ายออกค่ะ 👇"}`,
+    text: `📦 แจ้งย้ายออก ห้อง ${draft.rooms.join(", ")}\n\n${rule}\n\n${hint || "กดปุ่ม 📅 เลือกวันที่ ด้านล่างได้เลยค่ะ 👇"}`,
     quickReply: { items: [
       { type: "action", action: { type: "datetimepicker", label: "📅 เลือกวันที่", data: `action=MOVEOUT_DATE&d=${draft.id}`, mode: "date", initial: min, min, max } },
       { type: "action", action: { type: "message", label: "ยกเลิก", text: "ยกเลิก" } },
@@ -896,7 +897,7 @@ async function handleMoveoutPostback(event, data, users, rooms, user) {
     const date = event.postback?.params?.date;
     if (!draft.rooms) { await reply("กรุณาเลือกห้องก่อนค่ะ พิมพ์ \"ย้ายออก\" เพื่อเริ่มใหม่"); return; }
     if (!isMoveoutDateInRange(date)) {
-      await lineReply(event.replyToken, [moveoutDatePicker(draft, "เลือกได้เฉพาะวันตั้งแต่พรุ่งนี้ถึง 90 วันข้างหน้าค่ะ 👇")]); return;
+      await lineReply(event.replyToken, [moveoutDatePicker(draft, "วันที่เลือกไม่อยู่ในช่วงที่กำหนดค่ะ กรุณาเลือกใหม่ 👇")]); return;
     }
     draft.date = date; users[userId].state = "WAIT_MOVEOUT_CONFIRM"; users[userId].moveoutDraft = draft; await saveUsers(users);
     await lineReply(event.replyToken, [moveoutConfirmCard(draft)]); return;

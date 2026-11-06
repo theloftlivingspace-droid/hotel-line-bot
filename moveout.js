@@ -68,10 +68,22 @@ function addDaysIso(iso, n) {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
-// วันย้ายออกที่เลือกได้: ตั้งแต่พรุ่งนี้ ถึง +90 วัน
+// บวกเดือนแบบปฏิทิน (31 ม.ค. + 1 เดือน → 28/29 ก.พ.)
+function addMonthsIso(iso, n) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1 + n, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), Math.min(d, last))).toISOString().slice(0, 10);
+}
+function endOfMonthIso(iso) {
+  const [y, m] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+// กฎสัญญา: แจ้งล่วงหน้าอย่างน้อย 1 เดือน และต้องย้ายออกไม่เกินวันสิ้นเดือน
+// → เลือกได้ตั้งแต่ "วันนี้ + 1 เดือน" ถึง "สิ้นเดือนของวันนั้น" (เช่น แจ้ง 9 ต.ค. → 9–30 พ.ย.)
 function moveoutDateRange(now = Date.now()) {
-  const today = bangkokTodayIso(now);
-  return { min: addDaysIso(today, 1), max: addDaysIso(today, 90) };
+  const min = addMonthsIso(bangkokTodayIso(now), 1);
+  return { min, max: endOfMonthIso(min) };
 }
 function isMoveoutDateInRange(iso, now = Date.now()) {
   if (!isValidIsoDate(iso)) return false;
@@ -92,6 +104,6 @@ function buildMoveoutTenantMessage(roomNums, isoDate) {
 
 module.exports = {
   roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort,
-  isMoveoutKeyword, pickRoomsFromText, bangkokTodayIso, addDaysIso, moveoutDateRange, isMoveoutDateInRange,
+  isMoveoutKeyword, pickRoomsFromText, bangkokTodayIso, addDaysIso, addMonthsIso, endOfMonthIso, moveoutDateRange, isMoveoutDateInRange,
   buildMoveoutTenantMessage,
 };
