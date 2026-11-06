@@ -1851,15 +1851,11 @@ app.get("/api/moveout-requests", adminAuth, async (req, res) => { res.json(await
 // ช่วงวันที่ย้ายออกที่เลือกได้ (ใช้จำกัดปฏิทินในฟอร์มแอดมิน)
 app.get("/api/moveout-range", adminAuth, (req, res) => { res.json(moveoutDateRange()); });
 
-// แอดมินแจ้งย้ายออกแทนผู้เช่า (เช่น ผู้เช่าแจ้งทางโทรศัพท์/ต่อหน้า) — ใช้กฎช่วงวันที่เดียวกับผู้เช่า
+// แอดมินแจ้งย้ายออกแทนผู้เช่า (เช่น ผู้เช่าแจ้งทางโทรศัพท์/ต่อหน้า) — แอดมินเลือกวันได้ทุกช่วง (ไม่ติดกฎ 1 เดือน/+3 เดือน ของผู้เช่า) เผื่อผ่อนผัน/บันทึกย้อนหลัง
 app.post("/api/moveout-requests", adminAuth, async (req, res) => {
   const { roomNumber, moveoutDate, note, notifyGroup, notifyTenant } = req.body || {};
   const rn = String(roomNumber || "").trim();
   if (!isValidIsoDate(moveoutDate)) return res.status(400).json({ error: "วันที่ย้ายออกไม่ถูกต้อง" });
-  if (!isMoveoutDateInRange(moveoutDate)) {
-    const { min, max } = moveoutDateRange();
-    return res.status(400).json({ error: `วันที่ย้ายออกต้องอยู่ระหว่าง ${formatThaiDateShort(min)} ถึง ${formatThaiDateShort(max)} (ล่วงหน้าอย่างน้อย 1 เดือน)` });
-  }
   const rooms = await loadRooms();
   const room = rooms[rn];
   if (!room) return res.status(404).json({ error: `ไม่พบห้อง ${rn}` });
