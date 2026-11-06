@@ -263,7 +263,7 @@ async function redisDel(key) {
 }
 
 // ─── File helpers (fallback) ────────────────────────────────────
-const { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort } = require("./moveout.js");
+const { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort, buildMoveoutTenantMessage } = require("./moveout.js");
 const DATA_DIR      = path.join(__dirname, "data");
 const ROOMS_FILE    = path.join(DATA_DIR, "rooms.json");
 const USERS_FILE    = path.join(DATA_DIR, "users.json");
@@ -1748,7 +1748,7 @@ app.get("/api/contact-logs",     adminAuth, (req, res) => { res.json(loadJSON(pa
 app.get("/api/moveout-requests", adminAuth, async (req, res) => { res.json(await loadMoveouts()); });
 // แอดมินแจ้งย้ายออกแทนผู้เช่า (เช่น ผู้เช่าแจ้งทางโทรศัพท์/ต่อหน้า)
 app.post("/api/moveout-requests", adminAuth, async (req, res) => {
-  const { roomNumber, moveoutDate, note, notifyGroup } = req.body || {};
+  const { roomNumber, moveoutDate, note, notifyGroup, notifyTenant } = req.body || {};
   const rn = String(roomNumber || "").trim();
   if (!isValidIsoDate(moveoutDate)) return res.status(400).json({ error: "วันที่ย้ายออกไม่ถูกต้อง" });
   const rooms = await loadRooms();
@@ -1769,7 +1769,17 @@ app.post("/api/moveout-requests", adminAuth, async (req, res) => {
   if (notifyGroup && LINE_GROUP) {
     linePush(LINE_GROUP, [{ type: "text", text: `📦 แจ้งย้ายออก\n🏠 ห้อง ${rn}\n📅 ย้ายออกวันที่ ${formatThaiDateShort(moveoutDate)}\n\nเตรียมตรวจห้องด้วยนะคะ` }]).catch(() => {});
   }
-  res.json({ ok: true, record });
+  // แจ้งผู้เช่าทาง LINE (เช็กลิสต์เตรียมตรวจห้อง/คืนกุญแจ/เคลียร์ค่าใช้จ่าย)
+  // tenantNotified: true = ส่งแล้ว · false = ส่งไม่สำเร็จ · "no_line" = ห้องยังไม่ผูก LINE · null = ไม่ได้ขอให้แจ้ง
+  let tenantNotified = null;
+  if (notifyTenant) {
+    if (!room.lineUserId) tenantNotified = "no_line";
+    else {
+      try { await linePush(room.lineUserId, [{ type: "text", text: buildMoveoutTenantMessage(rn, moveoutDate) }]); tenantNotified = true; }
+      catch (e) { console.error("[Moveout tenant notify]", e.message); tenantNotified = false; }
+    }
+  }
+  res.json({ ok: true, record, tenantNotified });
 });
 app.patch("/api/moveout-requests/:idx", adminAuth, async (req, res) => {
   const idx = parseInt(req.params.idx), { status } = req.body;

@@ -304,7 +304,8 @@ textarea.input{resize:vertical;line-height:1.7}
           <select id="mo-room" class="input" style="flex:1;min-width:180px"></select>
           <input id="mo-date" class="input" type="date" style="width:auto">
           <input id="mo-note" class="input" type="text" placeholder="หมายเหตุ (ถ้ามี)" style="flex:1;min-width:140px">
-          <label style="font-size:13px;display:flex;gap:4px;align-items:center"><input id="mo-notify" type="checkbox" checked>แจ้งกลุ่มแม่บ้านด้วย</label>
+          <label style="font-size:13px;display:flex;gap:4px;align-items:center"><input id="mo-notify" type="checkbox" checked>แจ้งกลุ่มแม่บ้าน</label>
+          <label style="font-size:13px;display:flex;gap:4px;align-items:center"><input id="mo-notify-tenant" type="checkbox" checked>แจ้งผู้เช่าทาง LINE</label>
           <button class="btn btn-primary btn-sm" onclick="submitMoveout()">บันทึก</button>
         </div>
         <div id="mo-msg" style="padding:0 16px 12px;font-size:12px;color:#b91c1c"></div>
@@ -919,13 +920,17 @@ async function renderMoveoutForm(){
 }
 async function submitMoveout(){
   const room=document.getElementById("mo-room").value,date=document.getElementById("mo-date").value;
-  const note=document.getElementById("mo-note").value,notify=document.getElementById("mo-notify").checked;
-  const msg=document.getElementById("mo-msg");msg.textContent="";
+  const note=document.getElementById("mo-note").value,notify=document.getElementById("mo-notify").checked,notifyT=document.getElementById("mo-notify-tenant").checked;
+  const msg=document.getElementById("mo-msg");msg.textContent="";msg.style.color="#b91c1c";
   if(!room||!date){msg.textContent="กรุณาเลือกห้องและวันที่ย้ายออก";return;}
-  if(!confirm(`บันทึกแจ้งย้ายออก ห้อง ${room} วันที่ ${date}`+(notify?"\nและส่งแจ้งกลุ่มแม่บ้าน":"")+" ?"))return;
+  if(!confirm(`บันทึกแจ้งย้ายออก ห้อง ${room} วันที่ ${date}`+(notify?"\n• ส่งแจ้งกลุ่มแม่บ้าน":"")+(notifyT?"\n• ส่ง LINE แจ้งผู้เช่า":"")+" ?"))return;
   try{
-    await api("/api/moveout-requests",{method:"POST",body:JSON.stringify({roomNumber:room,moveoutDate:date,note,notifyGroup:notify})});
+    const r=await api("/api/moveout-requests",{method:"POST",body:JSON.stringify({roomNumber:room,moveoutDate:date,note,notifyGroup:notify,notifyTenant:notifyT})});
     document.getElementById("mo-note").value="";document.getElementById("mo-date").value="";
+    if(r.tenantNotified===true){msg.style.color="#15803d";msg.textContent="บันทึกแล้ว และส่ง LINE แจ้งผู้เช่าแล้ว";}
+    else if(r.tenantNotified==="no_line"){msg.style.color="#b45309";msg.textContent="บันทึกแล้ว แต่ห้องนี้ยังไม่ผูก LINE จึงไม่ได้แจ้งผู้เช่า — โปรดแจ้งทางอื่น";}
+    else if(r.tenantNotified===false){msg.style.color="#b91c1c";msg.textContent="บันทึกแล้ว แต่ส่ง LINE หาผู้เช่าไม่สำเร็จ — โปรดแจ้งทางอื่น";}
+    else{msg.style.color="#15803d";msg.textContent="บันทึกแล้ว";}
     loadMoveouts();
   }catch(e){let t=e.message;try{t=JSON.parse(t).error||t;}catch(_){}msg.textContent=t;}
 }

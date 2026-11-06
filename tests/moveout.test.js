@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort } = require("../moveout.js");
+const { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort, buildMoveoutTenantMessage } = require("../moveout.js");
 
 const rooms = { 202: { lineUserId: "U1" }, 406: { lineUserId: "U1" }, 113: { lineUserId: "U2" } };
 assert.deepStrictEqual(roomsOfUser(rooms, "U1", {}).sort(), ["202", "406"]);
@@ -27,5 +27,9 @@ assert.strictEqual(isValidIsoDate(""), false);
 assert.strictEqual(formatThaiDateShort("2026-11-15"), "15 พ.ย. 2569");
 assert.strictEqual(formatThaiDateShort("2026-01-05"), "5 ม.ค. 2569");
 assert.strictEqual(formatThaiDateShort("bad"), "bad");
+
+const msg = buildMoveoutTenantMessage("202", "2026-11-15");
+assert.ok(msg.includes("ห้อง: 202") && msg.includes("15 พ.ย. 2569"));
+assert.ok(msg.includes("ตรวจห้อง") && msg.includes("คืนกุญแจ") && msg.includes("เคลียร์ค่าใช้จ่าย"));
 
 console.log("moveout tests OK");

@@ -43,4 +43,14 @@ function formatThaiDateShort(str) {
   return `${d} ${THAI_MONTHS_SHORT[mo - 1]} ${y + 543}`;
 }
 
-module.exports = { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort };
+// ข้อความตอบผู้เช่า (LINE) เมื่อรับแจ้งย้ายออก — เช็กลิสต์สิ่งที่ต้องเตรียม
+function buildMoveoutTenantMessage(roomNum, isoDate) {
+  return `📦 รับแจ้งย้ายออกแล้วค่ะ\n\n🏠 ห้อง: ${roomNum}\n📅 วันที่ย้ายออก: ${formatThaiDateShort(isoDate)}\n\n` +
+    `กรุณาเตรียมการดังนี้ค่ะ\n` +
+    `1️⃣ เตรียมห้องให้พร้อมสำหรับตรวจห้อง\n` +
+    `2️⃣ คืนกุญแจ / คีย์การ์ด\n` +
+    `3️⃣ เคลียร์ค่าใช้จ่ายให้เรียบร้อย\n\n` +
+    `เจ้าหน้าที่จะติดต่อกลับเพื่อนัดตรวจห้องค่ะ 😊`;
+}
+
+module.exports = { roomsOfUser, pickMentionedRoom, resolveMoveoutRoom, isValidIsoDate, formatThaiDateShort, buildMoveoutTenantMessage };
