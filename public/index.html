@@ -915,10 +915,8 @@ async function renderMoveoutForm(){
   const sel=document.getElementById("mo-room");
   if(!Object.keys(allRooms).length){try{allRooms=await api("/api/rooms");}catch(e){}}
   try{
-    const r=await api("/api/moveout-range"),di=document.getElementById("mo-date");
-    di.min=r.min;di.max=r.max;
-    if(di.value&&(di.value<r.min||di.value>r.max))di.value="";
-    document.getElementById("mo-range").textContent=`เลือกได้ ${moThaiDate(r.min)} – ${moThaiDate(r.max)} (แจ้งล่วงหน้าอย่างน้อย 1 เดือน เลือกล่วงหน้าได้ไม่เกิน 3 เดือน)`;
+    const r=await api("/api/moveout-range");
+    document.getElementById("mo-range").textContent=`แอดมินเลือกวันได้ทุกช่วง (ผู้เช่าเลือกเองใน LINE ได้ ${moThaiDate(r.min)} – ${moThaiDate(r.max)})`;
   }catch(e){}
   const cur=sel.value;
   const rooms=Object.values(allRooms).filter(r=>r.tenantName||r.lineUserId).sort((a,b)=>String(a.roomNumber).localeCompare(String(b.roomNumber),"th",{numeric:true}));
