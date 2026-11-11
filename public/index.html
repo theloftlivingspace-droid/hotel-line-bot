@@ -977,7 +977,8 @@ async function loadMoveouts(){
           ${moIsOpen(m)?`
             <button class="btn btn-primary btn-sm" onclick="movedOut(${i})">✅ ย้ายออกแล้ว</button>
             <button class="btn btn-ghost btn-sm" onclick="rejectMoveout(${i})">ยกเลิก</button>
-          `:`<span class="pill ${m.status==="completed"?"pill-green":"pill-gray"}">${m.status==="completed"?"ย้ายออกแล้ว":"ยกเลิก"}</span>`}
+          `:`<span class="pill ${m.status==="completed"?"pill-green":"pill-gray"}">${m.status==="completed"?"ย้ายออกแล้ว":"ยกเลิก"}</span>
+            <button class="btn btn-ghost btn-sm" title="ลบรายการนี้ออกถาวร" onclick="deleteMoveout(${i})">🗑 ลบ</button>`}
         </div>
       </div>`).join("");
   }catch(e){el.innerHTML=`<div class="empty" style="color:#b91c1c">${escHtml(e.message)}</div>`;}
@@ -989,6 +990,13 @@ async function movedOut(idx){
   if(!confirm(`ยืนยันว่าห้อง ${m.roomNumber} ย้ายออกแล้ว?\nระบบจะล้าง LINE User ID ของห้องนี้ และแจ้งกลุ่มแม่บ้านว่าพร้อมทำความสะอาด\n(กดต่อเมื่อตรวจห้อง รับกุญแจ และเรียกเก็บค่าใช้จ่ายครบแล้ว)`+warn))return;
   await api(`/api/moveout-requests/${idx}`,{method:"PATCH",body:JSON.stringify({status:"completed"})});
   loadMoveouts();loadRooms();
+}
+async function deleteMoveout(idx){
+  const m=moveoutCache[idx];if(!m)return;
+  if(!confirm(`ลบรายการห้อง ${m.roomNumber} (${m.status==="completed"?"ย้ายออกแล้ว":"ยกเลิก"}) ออกถาวร?\nลบแล้วกู้คืนไม่ได้`))return;
+  try{await api(`/api/moveout-requests/${idx}`,{method:"DELETE"});}
+  catch(e){let t=e.message;try{t=JSON.parse(t).error||t;}catch(_){}alert(t);}
+  loadMoveouts();
 }
 async function rejectMoveout(idx){
   if(!confirm("ยกเลิกการแจ้งย้ายออก?"))return;

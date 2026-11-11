@@ -1918,33 +1918,17 @@ app.patch("/api/moveout-requests/:idx", adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── one-off: กู้รายการแจ้งย้ายออกห้อง 202 + 406 ─────────────────
-// 9 ต.ค. 2569 19:23 ผู้เช่า (202+406) แจ้งย้ายออกวันที่ 15 พ.ย. 2569 แต่บอทตอบรับโดยไม่ได้บันทึก (บั๊กที่แก้ใน PR นี้)
-// เจ้าของยืนยัน 5 พ.ย. 2569 ว่า 406 ย้ายออกวันเดียวกัน
-// รันครั้งเดียวตอนบูต (กันซ้ำด้วย flag ใน Redis + เช็กรายการซ้ำรายห้อง) — ลบฟังก์ชันนี้ทิ้งได้หลังดีพลอยแล้ว
-async function seedMoveoutOnce() {
-  if (!REDIS_URL) return;
-  const FLAG = "moveout_seed_202_406_20261115";
-  if (await redisGet(FLAG)) return;
-  const rooms = await loadRooms();
-  const list = await loadMoveouts();
-  const seeds = [
-    { room: "202", date: "2026-10-09T12:23:00.000Z", detail: "ห้อง 202  ย้ายออกวันที่ 15 พ.ย.2569", note: "กู้คืนจากแชท LINE (บอทไม่ได้บันทึกตอนนั้น)" },
-    { room: "406", date: "2026-11-05T00:00:00.000Z", detail: "ห้อง 406  ย้ายออกวันที่ 15 พ.ย.2569", note: "เจ้าของยืนยันว่าย้ายออกวันเดียวกับ 202 (ไม่ได้พิมพ์ในแชท)" },
-  ];
-  let added = 0;
-  for (const sd of seeds) {
-    const exists = list.some(m => String(m.roomNumber) === sd.room && /15\s*พ\.ย/.test(m.moveoutDetail || ""));
-    if (exists) continue;
-    const r = rooms[sd.room];
-    list.unshift({ date: sd.date, roomNumber: sd.room, tenantName: r?.tenantName || "ไม่ระบุ", userId: r?.lineUserId || "",
-      moveoutDetail: sd.detail, status: "pending", note: sd.note });
-    added++;
-  }
-  if (added && !(await saveMoveouts(list))) return; // ไม่ตั้ง flag → ลองใหม่รอบบูตหน้า
-  if (added) console.log(`[Moveout seed] เพิ่มรายการแจ้งย้ายออก ${added} ห้อง (202/406)`);
-  await redisSet(FLAG, "1");
-}
+// ลบรายการที่ปิดแล้ว (ยกเลิก / ย้ายออกแล้ว) ออกจากรายการถาวร — ลบรายการที่ยังรอย้ายออกไม่ได้ (ต้องกดยกเลิกก่อน กันพลาด)
+app.delete("/api/moveout-requests/:idx", adminAuth, async (req, res) => {
+  const idx = parseInt(req.params.idx);
+  const logs = await loadMoveouts();
+  const m = logs[idx];
+  if (!m) return res.status(404).json({ error: "Not found" });
+  if (["pending", "confirmed"].includes(m.status)) return res.status(409).json({ error: "รายการนี้ยังรอย้ายออกอยู่ — กดยกเลิกก่อนจึงจะลบได้" });
+  logs.splice(idx, 1);
+  if (!(await saveMoveouts(logs))) return res.status(500).json({ error: "บันทึกลง Redis ไม่สำเร็จ ลองใหม่อีกครั้ง" });
+  res.json({ ok: true });
+});
 
 function startWebhookServer() {
   app.listen(PORT, () => console.log("Webhook port " + PORT));
@@ -1969,7 +1953,6 @@ console.log("GOOGLE_SHEET_NAME:", process.env.GOOGLE_SHEET_NAME || "(ไม่�
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON:", process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? `OK (${process.env.GOOGLE_SERVICE_ACCOUNT_JSON.length} chars)` : "(ไม่พบ)");
 
 startWebhookServer();
-seedMoveoutOnce().catch(e => console.error("[Moveout seed]", e.message));
 
 // Push badge check: ทุก 5 นาที (booking to add / invoice to create / stock out)
 cron.schedule("*/5 * * * *", () => runBadgeCheck().catch((e) => console.error("[push-badge] cron error:", e.message)));
