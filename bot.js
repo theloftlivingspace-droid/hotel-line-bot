@@ -265,8 +265,11 @@ async function redisDel(key) {
 // ─── File helpers (fallback) ────────────────────────────────────
 const {
   roomsOfUser, pickMentionedRoom, isValidIsoDate, formatThaiDateShort, isMoveoutKeyword, pickRoomsFromText,
-  moveoutDateRange, isMoveoutDateInRange, buildMoveoutTenantMessage,
+  moveoutDateRange, isMoveoutDateInRange, buildMoveoutTenantMessage, bangkokTodayIso,
 } = require("./moveout.js");
+const {
+  buildRentTerminationMessage, buildHousekeepingLockMessage, exceedsMassLimit, inTerminationWindow,
+} = require("./rent-termination.js");
 const DATA_DIR      = path.join(__dirname, "data");
 const ROOMS_FILE    = path.join(DATA_DIR, "rooms.json");
 const USERS_FILE    = path.join(DATA_DIR, "users.json");
@@ -1108,12 +1111,76 @@ async function getPaymentStatus(roomNumbers) {
   return { confirmed: false, fine: overdueDays * 100, confirmedAmount: null };
 }
 
+// ─── สิ้นสุดสัญญา: เลยวันที่ 15 แล้วยังไม่ชำระค่าเช่า ────────────────
+// ส่งครั้งเดียวต่อห้องต่อเดือน (flag ใน Redis) · ข้ามห้องที่มีสลิปรอตรวจ · ถ้าห้องเข้าเกณฑ์มากผิดปกติ (เช่น รอบบิลเพิ่งเปลี่ยน) ไม่ส่งอัตโนมัติ แต่แจ้งแอดมิน
+const RENT_TERM_FILE = path.join(DATA_DIR, "rent-term-sent.json");
+async function loadRentTermSent() {
+  const v = await redisGet("rent_term_sent");
+  return (v && typeof v === "object" && !Array.isArray(v)) ? v : loadJSON(RENT_TERM_FILE, {});
+}
+async function saveRentTermSent(obj) { saveJSON(RENT_TERM_FILE, obj); await redisSet("rent_term_sent", obj); }
+
+async function runRentTermination({ day, onlyRoom, isTest }) {
+  const rooms = await loadRooms();
+  if (isTest) {                                   // ทดสอบ: ส่งหาห้องที่ระบุห้องเดียว ไม่แตะกลุ่มแม่บ้าน/flag
+    const room = onlyRoom && rooms[onlyRoom];
+    if (!room || !room.lineUserId) return;
+    await linePush(room.lineUserId, [{ type: "text", text: "[ทดสอบ]\n" + buildRentTerminationMessage(room.roomNumber) }]);
+    return;
+  }
+  if (onlyRoom || !inTerminationWindow(day)) return;
+  const payments = await loadPayments();
+  const roomSet = (st) => new Set(payments.filter(p => p.status === st).flatMap(p => String(p.roomNumber || "").split(",").map(r => r.trim())));
+  const paid = roomSet("confirmed"), reviewing = roomSet("pending_review");
+  const monthKey = bangkokTodayIso().slice(0, 7);
+  const state = await loadRentTermSent();
+  for (const k of Object.keys(state)) if (!k.startsWith(monthKey.slice(0, 4))) delete state[k];   // เก็บเฉพาะปีนี้
+  const done = new Set(state[monthKey] || []);
+  const tenants = Object.values(rooms).filter(r => r.lineUserId);
+  const unpaid = tenants.filter(r => !paid.has(r.roomNumber) && !done.has(r.roomNumber));
+  const waiting = unpaid.filter(r => reviewing.has(r.roomNumber));
+  const targets = unpaid.filter(r => !reviewing.has(r.roomNumber));
+  const tellAdmin = (text) => ADMIN_USER ? linePush(ADMIN_USER, [{ type: "text", text }]).catch(() => {}) : null;
+
+  const waitKey = `${monthKey}:wait`, alerted = new Set(state[waitKey] || []);
+  const newWaiting = waiting.filter(r => !alerted.has(r.roomNumber));
+  if (newWaiting.length) {
+    state[waitKey] = [...alerted, ...newWaiting.map(r => r.roomNumber)];
+    await saveRentTermSent(state);
+    await tellAdmin(`⏳ ห้อง ${newWaiting.map(r => r.roomNumber).join(", ")} เลยวันที่ 15 แต่มีสลิปรอตรวจ — ยังไม่ส่งแจ้งสิ้นสุดสัญญา\nตรวจสลิปแล้วถ้าไม่ชำระ ระบบจะไม่ส่งซ้ำเอง โปรดดำเนินการเอง`);
+  }
+  if (!targets.length) return;
+
+  if (exceedsMassLimit(targets.length, tenants.length)) {
+    if (!state[`${monthKey}:held`]) {
+      state[`${monthKey}:held`] = true; await saveRentTermSent(state);
+      await tellAdmin(`⚠️ พบห้องค้างชำระเกินวันที่ 15 จำนวน ${targets.length} จาก ${tenants.length} ห้อง (มากผิดปกติ — อาจเพราะเพิ่งโหลดบิลรอบใหม่)\nระบบ "ไม่ส่ง" แจ้งสิ้นสุดสัญญาอัตโนมัติ กรุณาตรวจสถานะการชำระใน Billing Console แล้วดำเนินการเอง`);
+    }
+    return;
+  }
+
+  const sentRooms = [];
+  for (const room of targets) {
+    try { await linePush(room.lineUserId, [{ type: "text", text: buildRentTerminationMessage(room.roomNumber) }]); }
+    catch (e) { console.error(`[RentTerm] ส่งผู้เช่าไม่สำเร็จห้อง ${room.roomNumber}:`, e.message); }
+    sentRooms.push(room.roomNumber);
+    await new Promise(r => setTimeout(r, 500));
+  }
+  state[monthKey] = [...done, ...sentRooms];
+  await saveRentTermSent(state);
+  if (LINE_GROUP) await linePush(LINE_GROUP, [{ type: "text", text: buildHousekeepingLockMessage(sentRooms) }]).catch(e => console.error("[RentTerm group]", e.message));
+  await tellAdmin(`🔒 สิ้นสุดสัญญาอัตโนมัติ (ค้างชำระเกินวันที่ 15)\nห้อง ${sentRooms.join(", ")}\n• ส่งข้อความถึงผู้เช่าแล้ว\n• แจ้งกลุ่มแม่บ้านให้ล็อคห้อง/ยกเลิกคีย์การ์ดแล้ว\nถ้าห้องไหนชำระแล้วหรือผ่อนผัน อย่าลืมแจ้งกลุ่มแม่บ้านเองด้วย`);
+  console.log(`[RentTerm] วันที่ ${day} — ส่งแจ้งสิ้นสุดสัญญา: ${sentRooms.join(", ")}`);
+}
+
 async function runRentReminder(forceDay, onlyRoom = null, isTest = false) {
   // ใช้วันที่ตาม timezone ไทย (Asia/Bangkok) ไม่ใช่ UTC
   const now = new Date();
   const bangkokDate = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
   const day = forceDay || bangkokDate.getDate();
-  if (!isTest && !onlyRoom && (day < 8 || day > 15)) return;
+  // เลยวันที่ 15 แล้วยังไม่ชำระ → สิ้นสุดสัญญา (ข้อความผู้เช่า + กลุ่มแม่บ้านล็อคห้อง/ยกเลิกคีย์การ์ด)
+  if (day >= 16) { await runRentTermination({ day, onlyRoom, isTest }); return; }
+  if (!isTest && !onlyRoom && day < 8) return;
   try {
     const rooms = await loadRooms(), payments = await loadPayments();
     // ไม่ผูกกับเดือนปฏิทินจริง — ใช้สถานะ confirmed ล้วนๆ (archive เกิดตอนโหลดบิลใหม่เท่านั้น)
@@ -1964,7 +2031,7 @@ try {
 } catch (e) {
   console.error(`[CRON] FAILED to register hotel job: ${e.message}`);
 }
-// Rent reminder: วันที่ 8-15 เวลา 00:05 น.
+// Rent reminder: วันที่ 8-15 เตือน / วันที่ 16-20 แจ้งสิ้นสุดสัญญา (ถ้ายังไม่ชำระ) เวลา 00:05 น.
 cron.schedule("5 0 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });
 // ต้นเดือน 09:00 → เช็ค Redis flag ถ้าใช้ OA สำรองอยู่ แจ้ง admin ให้กลับ OA หลัก
 cron.schedule("0 9 1 * *", async () => {
