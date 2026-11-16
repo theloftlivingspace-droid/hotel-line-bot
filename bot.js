@@ -494,9 +494,9 @@ const DAILY_MORNING_CRON = process.env.DAILY_SUMMARY_MORNING_CRON || "30 7 * * *
 const DAILY_EVENING_CRON = process.env.DAILY_SUMMARY_EVENING_CRON || "30 18 * * *";
 const CHECKOUT_LOG_SHEET_ID = process.env.CHECKOUT_LOG_SHEET_ID || "1hP26o_5W4IuqqE9wJyMPuttoPB4m6EIRfkC4ePMzrGE";
 const CHECKOUT_LOG_GID = process.env.CHECKOUT_LOG_GID || "335713576";
-// DAILY_SUMMARY_FORMAT=flex (ค่าเริ่มต้น, การ์ด) | text ; DAILY_SUMMARY_DASHBOARD_URL = ลิงก์ปุ่ม "เปิดแดชบอร์ด" (https เท่านั้น ถ้าไม่ตั้งจะไม่มีปุ่ม)
+// DAILY_SUMMARY_FORMAT=flex (ค่าเริ่มต้น, การ์ด) | text ; DAILY_SUMMARY_DASHBOARD_URL = ลิงก์ปุ่ม "เปิดแดชบอร์ด" (https เท่านั้น; ค่าเริ่มต้น = the-loft-admin.vercel.app; ตั้งเป็นค่าว่างเพื่อซ่อนปุ่ม)
 const DAILY_SUMMARY_FORMAT = process.env.DAILY_SUMMARY_FORMAT || "flex";
-const DAILY_SUMMARY_DASHBOARD_URL = process.env.DAILY_SUMMARY_DASHBOARD_URL || "";
+const DAILY_SUMMARY_DASHBOARD_URL = process.env.DAILY_SUMMARY_DASHBOARD_URL || "https://the-loft-admin.vercel.app/";
 
 function bangkokDate(offsetDays) {
   return new Date(Date.now() + (offsetDays || 0) * 86400000).toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" });
