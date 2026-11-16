@@ -67,3 +67,25 @@ assert.deepStrictEqual(plan.carry.map((c) => c.room), ["214"]);
 assert.strictEqual(D.shouldSendMorning(plan), true);
 assert.strictEqual(D.shouldSendMorning({ checkIns: 0, checkOuts: 0, stayOvers: 0, turnover: [], carry: [] }), false);
 console.log("daily-summary tests OK");
+
+// ── Flex ──
+(function flexTests() {
+  const walk = (n, f) => { f(n); (n.contents || []).forEach((c) => walk(c, f)); };
+  const sEve = D.buildEveningSummary({ date: "2026-11-16", expectedRooms: ["113", "103", "214", "209"], logs });
+  const ev = D.buildEveningFlex(sEve, "วันจันทร์ที่ 16 พฤศจิกายน 2569", { dashboardUrl: "https://example.com/admin" });
+  assert.strictEqual(ev.type, "flex");
+  assert.ok(ev.altText.length > 0 && ev.altText.length <= 400);
+  assert.strictEqual(ev.contents.type, "bubble");
+  assert.strictEqual(ev.contents.footer.contents[0].action.uri, "https://example.com/admin");
+  let n = 0;
+  for (const part of ["header", "body", "footer"]) walk(ev.contents[part], (x) => { if (x.type === "text") { n++; assert.ok(x.text && x.text.trim() !== "", "ข้อความว่างใน Flex"); } });
+  assert.ok(n > 5);
+  assert.ok(!JSON.stringify(ev).includes("Guest A"));
+  // ไม่มี URL หรือไม่ใช่ https → ไม่มีปุ่ม (LINE ปฏิเสธ uri ที่ไม่ใช่ https)
+  assert.strictEqual(D.buildEveningFlex(sEve, "x", {}).contents.footer, undefined);
+  assert.strictEqual(D.buildEveningFlex(sEve, "x", { dashboardUrl: "http://x" }).contents.footer, undefined);
+  const mp = D.buildMorningFlex(D.buildMorningPlan({ today: { checkIns: [{ room: "113" }], checkOuts: [{ room: "113" }], stayOvers: [] }, yesterdayLogs: [] }), "x", {});
+  assert.strictEqual(mp.type, "flex");
+  assert.ok(JSON.stringify(mp).includes("ทำก่อน"));
+  console.log("daily-summary flex tests OK");
+})();

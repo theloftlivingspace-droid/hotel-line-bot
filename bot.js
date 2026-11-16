@@ -494,6 +494,9 @@ const DAILY_MORNING_CRON = process.env.DAILY_SUMMARY_MORNING_CRON || "30 7 * * *
 const DAILY_EVENING_CRON = process.env.DAILY_SUMMARY_EVENING_CRON || "30 18 * * *";
 const CHECKOUT_LOG_SHEET_ID = process.env.CHECKOUT_LOG_SHEET_ID || "1hP26o_5W4IuqqE9wJyMPuttoPB4m6EIRfkC4ePMzrGE";
 const CHECKOUT_LOG_GID = process.env.CHECKOUT_LOG_GID || "335713576";
+// DAILY_SUMMARY_FORMAT=flex (ค่าเริ่มต้น, การ์ด) | text ; DAILY_SUMMARY_DASHBOARD_URL = ลิงก์ปุ่ม "เปิดแดชบอร์ด" (https เท่านั้น; ค่าเริ่มต้น = the-loft-admin.vercel.app; ตั้งเป็นค่าว่างเพื่อซ่อนปุ่ม)
+const DAILY_SUMMARY_FORMAT = process.env.DAILY_SUMMARY_FORMAT || "flex";
+const DAILY_SUMMARY_DASHBOARD_URL = process.env.DAILY_SUMMARY_DASHBOARD_URL || "https://the-loft-admin.vercel.app/";
 
 function bangkokDate(offsetDays) {
   return new Date(Date.now() + (offsetDays || 0) * 86400000).toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" });
@@ -516,13 +519,13 @@ async function buildDailySummary(kind) {
   if (kind === "evening") {
     const { checkOuts } = filterByDate(rows, today);
     const s = DS.buildEveningSummary({ date: today, expectedRooms: checkOuts.map((r) => r.room), logs });
-    return { kind, date: today, send: DS.shouldSendEvening(s), summary: s, text: DS.buildEveningMessage(s, formatThaiDate(today)) };
+    return { kind, date: today, send: DS.shouldSendEvening(s), summary: s, text: DS.buildEveningMessage(s, formatThaiDate(today)), flex: DS.buildEveningFlex(s, formatThaiDate(today), { dashboardUrl: DAILY_SUMMARY_DASHBOARD_URL }) };
   }
   const plan = DS.buildMorningPlan({
     today: filterByDate(rows, today),
     yesterdayLogs: DS.dedupeLatest(logs.filter((l) => l.date === bangkokDate(-1))),
   });
-  return { kind, date: today, send: DS.shouldSendMorning(plan), summary: plan, text: DS.buildMorningMessage(plan, formatThaiDate(today)) };
+  return { kind, date: today, send: DS.shouldSendMorning(plan), summary: plan, text: DS.buildMorningMessage(plan, formatThaiDate(today)), flex: DS.buildMorningFlex(plan, formatThaiDate(today), { dashboardUrl: DAILY_SUMMARY_DASHBOARD_URL }) };
 }
 // dryRun = สร้างข้อความอย่างเดียว ไม่ส่ง ไม่บันทึก flag | force = ส่งแม้กติกาบอกว่าไม่ต้องส่ง (ใช้ทดสอบ)
 async function runDailySummary(kind, { dryRun = false, force = false } = {}) {
@@ -534,7 +537,15 @@ async function runDailySummary(kind, { dryRun = false, force = false } = {}) {
   if (dryRun) return r;
   if (!ADMIN_USER) throw new Error("ไม่ได้ตั้ง ADMIN_USER_ID");
   const sent = r.send || force;
-  if (sent) await linePush(ADMIN_USER, [{ type: "text", text: r.text }]);
+  if (sent) {
+    const textMsg = { type: "text", text: r.text };
+    if (DAILY_SUMMARY_FORMAT === "text") await linePush(ADMIN_USER, [textMsg]);
+    else {
+      // การ์ด Flex ที่ LINE ปฏิเสธ (400) จะไม่ทำให้ข้อความหาย — ถอยกลับไปส่งข้อความธรรมดา
+      try { await linePush(ADMIN_USER, [r.flex]); }
+      catch (e) { console.warn("[daily-summary] flex push failed, fallback to text: " + e.message); await linePush(ADMIN_USER, [textMsg]); }
+    }
+  }
   await redisSet(flagKey, today);
   return Object.assign({}, r, { sent });
 }
