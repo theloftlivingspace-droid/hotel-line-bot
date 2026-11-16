@@ -161,8 +161,56 @@ function buildMorningMessage(p, dateLabel) {
   return m + SEP + "\n💌 ส่งอัตโนมัติโดยระบบ";
 }
 
+
+// ─── LINE Flex Message (การ์ดตามดีไซน์ AI-PMS: หัว navy/ทอง, แถวตัวเลข, กล่องเหลือง/แดง, ปุ่มเปิดแดชบอร์ด) ───
+const C = { navy: "#071B3D", gold: "#D9B25C", ink: "#1B2A41", sub: "#C9D3E3", amberBg: "#FFF1D6", amberTx: "#7A4B00", redBg: "#FDE7E7", redTx: "#8A1C1C" };
+const fx = (text, o) => Object.assign({ type: "text", text: String(text) || "-", wrap: true, size: "sm", color: C.ink }, o || {});
+const fxRow = (label, value) => ({ type: "box", layout: "horizontal", contents: [fx(label, { flex: 3 }), fx(value, { flex: 2, align: "end", weight: "bold" })] });
+const fxCallout = (title, body, bg, fg) => ({
+  type: "box", layout: "vertical", backgroundColor: bg, cornerRadius: "md", paddingAll: "10px", spacing: "xs",
+  contents: [fx(title, { weight: "bold", color: fg }), ...(body ? [fx(body, { size: "xs", color: fg })] : [])],
+});
+function fxBubble({ title, sub, rows, callouts, altText, dashboardUrl }) {
+  const bubble = {
+    type: "bubble", size: "mega",
+    header: { type: "box", layout: "vertical", backgroundColor: C.navy, paddingAll: "14px", spacing: "xs",
+      contents: [fx(title, { color: C.gold, weight: "bold", size: "md" }), fx(sub, { color: C.sub, size: "xs" })] },
+    body: { type: "box", layout: "vertical", spacing: "md", paddingAll: "14px", contents: [...rows, ...callouts] },
+  };
+  if (dashboardUrl && /^https:\/\//.test(dashboardUrl)) {
+    bubble.footer = { type: "box", layout: "vertical", paddingAll: "12px",
+      contents: [{ type: "button", style: "primary", color: C.gold, height: "sm", action: { type: "uri", label: "เปิดแดชบอร์ด", uri: dashboardUrl } }] };
+  }
+  return { type: "flex", altText: clip(altText, 380), contents: bubble };
+}
+
+function buildEveningFlex(s, dateLabel, opts) {
+  const rows = [fxRow("ตรวจแล้ว", s.inspected + (s.expected ? " จาก " + s.expected : "") + " ห้อง"), fxRow("พร้อมรับแขก", s.ready.length + " ห้อง")];
+  const callouts = [];
+  if (s.notReady.length) callouts.push(fxCallout("⚠️ ไม่พร้อม", s.notReady.map((x) => "ห้อง " + x.room + " (" + x.reason + ")").join(", "), C.amberBg, C.amberTx));
+  if (s.missing.length) callouts.push(fxCallout("❓ ยังไม่มีรายงานตรวจห้อง", "ห้อง " + s.missing.join(", "), C.amberBg, C.amberTx));
+  for (const f of s.followUps.slice(0, 5)) {
+    const note = f.note ? "\n📝 " + clip(f.note.replace(/\s+/g, " "), 120) : "";
+    callouts.push(fxCallout("📌 ห้อง " + f.room + " — ต้องตามต่อ", f.reasons.join(" / ") + note, C.redBg, C.redTx));
+  }
+  if (s.followUps.length > 5) callouts.push(fx("และอีก " + (s.followUps.length - 5) + " ห้อง ดูรายละเอียดในแดชบอร์ด", { size: "xs" }));
+  const alt = "ผลตรวจห้องวันนี้: พร้อม " + s.ready.length + " ห้อง" + (s.notReady.length ? ", ไม่พร้อม " + s.notReady.length : "") + (s.missing.length ? ", ยังไม่มีรายงาน " + s.missing.length : "") + (s.followUps.length ? ", ต้องตามต่อ " + s.followUps.length : "");
+  return fxBubble({ title: "ผลตรวจห้องวันนี้", sub: dateLabel, rows, callouts, altText: alt, dashboardUrl: opts && opts.dashboardUrl });
+}
+
+function buildMorningFlex(p, dateLabel, opts) {
+  const rows = [fxRow("เช็คเอาท์วันนี้", p.checkOuts + " ห้อง"), fxRow("เช็คอินวันนี้", p.checkIns + " ห้อง")];
+  if (p.stayOvers) rows.push(fxRow("ต่อพัก", p.stayOvers + " ห้อง"));
+  const callouts = [];
+  if (p.turnover.length) callouts.push(fxCallout("⏱ ทำก่อน", "ห้อง " + p.turnover.join(", ") + " เช็คเอาท์แล้วมีแขกใหม่เข้าวันเดียวกัน", C.amberBg, C.amberTx));
+  if (p.carry.length) callouts.push(fxCallout("📌 ค้างจากเมื่อวาน", p.carry.map((c) => "ห้อง " + c.room + " — " + c.reasons.join(" / ")).join("\n"), C.redBg, C.redTx));
+  const alt = "แผนวันนี้: เช็คเอาท์ " + p.checkOuts + " ห้อง, เช็คอิน " + p.checkIns + " ห้อง" + (p.turnover.length ? ", ทำก่อน ห้อง " + p.turnover.join(", ") : "");
+  return fxBubble({ title: "แผนวันนี้", sub: dateLabel, rows, callouts, altText: alt, dashboardUrl: opts && opts.dashboardUrl });
+}
+
 module.exports = {
   parseCsv, parseCheckoutLog, dedupeLatest, isReadyForGuests, followUpReasons,
   buildEveningSummary, shouldSendEvening, buildEveningMessage,
   buildMorningPlan, shouldSendMorning, buildMorningMessage, roomNum,
+  buildEveningFlex, buildMorningFlex,
 };
