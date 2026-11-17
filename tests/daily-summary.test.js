@@ -113,3 +113,63 @@ console.log("daily-summary tests OK");
   assert.ok(h.text.length <= 1500 && h.at);
   console.log("daily-summary settings tests OK");
 })();
+
+// ── กลุ่มแม่บ้าน / ราคาเป้าหมาย / AI สรุปหมายเหตุ ──
+(function groupPriceAiTests() {
+  // settings ใหม่
+  const n = D.normalizeSettings({ morning: { recipients: "both", includePrices: true }, evening: { aiSummary: true } });
+  assert.strictEqual(n.morning.recipients, "both");
+  assert.strictEqual(n.morning.includePrices, true);
+  assert.strictEqual(n.evening.aiSummary, true);
+  assert.strictEqual(D.normalizeSettings({ morning: { recipients: "everyone" } }).morning.recipients, "admin");   // ค่าแปลก → ค่าเริ่มต้น
+  assert.strictEqual(D.normalizeSettings({ morning: { includePrices: "yes" } }).morning.includePrices, false);
+  assert.ok(!("recipients" in D.normalizeSettings(null).evening));                                                 // การ์ดเย็นส่งแอดมินเท่านั้น
+
+  // ราคาเป้าหมาย
+  const csvIso = "Date,RoomType,Rate,Occ%,DaysAhead,UpdatedAt\n2026-11-17,Luxury,1900,0.5,0,x\n2026-11-17,Retro,1500,0.6,0,x\n2026-11-18,Luxury,2100,0.5,1,x\n";
+  assert.deepStrictEqual(D.parseTargetRates(csvIso, "2026-11-17"), { Luxury: 1900, Retro: 1500 });
+  const csvDmy = "Date,RoomType,Rate\n17/11/2026,Legacy,\"1,234\"\n";
+  assert.deepStrictEqual(D.parseTargetRates(csvDmy, "2026-11-17", "dmy"), { Legacy: 1234 });
+  assert.strictEqual(D.parseTargetRates(csvDmy, "2026-11-17", "mdy"), null);          // อ่านเป็น m/d → เดือน 17 ไม่มี → ไม่เจอวันนี้ → null ไม่เดา
+  assert.strictEqual(D.parseTargetRates(csvIso, "2026-12-01"), null);                  // ไม่มีข้อมูลวันนั้น → null (ไม่ใช้ราคาเก่า)
+  assert.strictEqual(D.parseTargetRates("a,b\n1,2\n", "2026-11-17"), null);            // โครงสร้างผิด → null
+  assert.strictEqual(D.formatPrices({ Retro: 1500, Luxury: 1900 }), "Luxury ฿1,900 · Retro ฿1,500");
+
+  // ข้อความเช้า: แอดมินเห็นราคา+ค้างจากเมื่อวาน ; กลุ่มแม่บ้านไม่เห็น และไม่มีปุ่มแดชบอร์ด
+  const plan = D.buildMorningPlan({ today: { checkIns: [{ room: "113" }], checkOuts: [{ room: "113" }], stayOvers: [] }, yesterdayLogs: [{ room: "214", damages: [], repairs: [], isCritical: true, leftBehind: "ไม่มี" }] });
+  const prices = { Luxury: 1900 };
+  const adminTxt = D.buildMorningMessage(plan, "x", { prices }), groupTxt = D.buildMorningMessage(plan, "x", { audience: "group", prices });
+  assert.ok(adminTxt.includes("ราคาเป้าหมาย") && adminTxt.includes("ค้างจากเมื่อวาน"));
+  assert.ok(!groupTxt.includes("ราคา") && !groupTxt.includes("ค้างจากเมื่อวาน") && groupTxt.includes("ทำก่อน"));
+  const gFlex = D.buildMorningFlex(plan, "x", { audience: "group", prices, dashboardUrl: "https://example.com" });
+  assert.strictEqual(gFlex.contents.footer, undefined);
+  assert.ok(!JSON.stringify(gFlex).includes("ราคา") && !JSON.stringify(gFlex).includes("ค้างจากเมื่อวาน"));
+  assert.ok(JSON.stringify(D.buildMorningFlex(plan, "x", { prices, dashboardUrl: "https://example.com" })).includes("ราคาเป้าหมาย"));
+
+  // AI: ตรวจสเปกผลลัพธ์
+  const raw = '```json\n[{"room":"103","summary":"แก้วแตก 1 ใบ","needsAttention":true},{"room":"999","summary":"ห้องที่ไม่ได้ส่ง","needsAttention":true},{"room":"214","summary":"  ", "needsAttention":true},{"room":"113","summary":"' + "ก".repeat(300) + '"}]\n```';
+  const v = D.validateAiNotes(raw, ["103", "214", "113"]);
+  assert.deepStrictEqual(Object.keys(v).sort(), ["103", "113"]);                      // ห้องนอกรายการ / summary ว่าง ถูกตัด
+  assert.strictEqual(v["113"].summary.length, 120);
+  assert.strictEqual(v["113"].needsAttention, false);                                  // ไม่ใช่ true ชัดเจน → false
+  assert.deepStrictEqual(D.validateAiNotes("ไม่ใช่ JSON", ["103"]), {});
+  assert.deepStrictEqual(D.validateAiNotes('{"room":"103"}', ["103"]), {});
+  // AI: เติมลงการ์ดเย็น
+  const base = D.buildEveningSummary({ date: "2026-11-16", expectedRooms: ["113", "103"], logs: logs.filter((l) => l.date === "2026-11-16") });
+  assert.ok(Array.isArray(base.notes));
+  const withAi = D.applyAiNotes(base, { "214": { summary: "ชามแตก มีกลิ่นผิดปกติ", needsAttention: true }, "113": { summary: "เรียบร้อย", needsAttention: false }, "103": { summary: "แก้วแตก 1 ใบ", needsAttention: true } });
+  const f214 = withAi.followUps.find((f) => f.room === "214"), f103 = withAi.followUps.find((f) => f.room === "103");
+  assert.strictEqual(f214.ai, "ชามแตก มีกลิ่นผิดปกติ");                               // ห้องที่ติดธงอยู่แล้ว → ได้สรุปเพิ่ม
+  assert.ok(f103 && f103.fromAi);                                                      // ห้องที่ไม่ติดธง แต่ AI เห็นว่าต้องใส่ใจ → เพิ่ม
+  assert.ok(!withAi.followUps.some((f) => f.room === "113"));                          // needsAttention=false → ไม่เพิ่ม
+  assert.strictEqual(D.applyAiNotes(base, null), base);
+  const aiMsg = D.buildEveningMessage(withAi, "x");
+  assert.ok(aiMsg.includes("🤖 ชามแตก มีกลิ่นผิดปกติ") && aiMsg.includes("🤖 แก้วแตก 1 ใบ"));
+  assert.ok(JSON.stringify(D.buildEveningFlex(withAi, "x", {})).includes("🤖 แก้วแตก 1 ใบ"));
+  // AI ทำให้ "ไม่ส่ง" กลายเป็น "ส่ง" ได้เมื่อพบเรื่องต้องตามจากหมายเหตุ
+  const calmLogs = D.parseCheckoutLog([HEAD.map(q).join(","), row({ uid: "x", date: "2026-11-16", room: "103", json: { extraNote: "แก้วแตก 1 ใบ" } })].join("\n"));
+  const calm = D.buildEveningSummary({ date: "2026-11-16", expectedRooms: ["103"], logs: calmLogs });
+  assert.strictEqual(D.shouldSendEvening(calm), false);
+  assert.strictEqual(D.shouldSendEvening(D.applyAiNotes(calm, { "103": { summary: "แก้วแตก 1 ใบ", needsAttention: true } })), true);
+  console.log("daily-summary group/price/AI tests OK");
+})();
