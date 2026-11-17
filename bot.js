@@ -490,8 +490,6 @@ async function runHotelJob() {
 // ─── สรุปประจำวันถึงแอดมิน (เช้า = แผนวันนี้ / เย็น = ผลตรวจห้อง) ──────────────
 // ปิดไว้เป็นค่าเริ่มต้น — เปิดด้วย DAILY_SUMMARY_ENABLED=true  ส่งถึง ADMIN_USER เท่านั้น (ไม่ส่งเข้ากลุ่มแม่บ้าน)
 const DAILY_SUMMARY_ENABLED = process.env.DAILY_SUMMARY_ENABLED === "true";
-const DAILY_MORNING_CRON = process.env.DAILY_SUMMARY_MORNING_CRON || "30 7 * * *";
-const DAILY_EVENING_CRON = process.env.DAILY_SUMMARY_EVENING_CRON || "30 18 * * *";
 const CHECKOUT_LOG_SHEET_ID = process.env.CHECKOUT_LOG_SHEET_ID || "1hP26o_5W4IuqqE9wJyMPuttoPB4m6EIRfkC4ePMzrGE";
 const CHECKOUT_LOG_GID = process.env.CHECKOUT_LOG_GID || "335713576";
 // DAILY_SUMMARY_FORMAT=flex (ค่าเริ่มต้น, การ์ด) | text ; DAILY_SUMMARY_DASHBOARD_URL = ลิงก์ปุ่ม "เปิดแดชบอร์ด" (https เท่านั้น; ค่าเริ่มต้น = the-loft-admin.vercel.app; ตั้งเป็นค่าว่างเพื่อซ่อนปุ่ม)
@@ -511,7 +509,8 @@ async function fetchCheckoutLogCsv() {
     return await res.text();
   } finally { clearTimeout(timer); }
 }
-async function buildDailySummary(kind) {
+async function buildDailySummary(kind, settings) {
+  const cfg = settings || DS.DEFAULT_SETTINGS;
   const today = bangkokDate(0);
   const rows = await fetchSheetData();
   // ห้อง 363 (Mycondo) ไม่อยู่ในงานแม่บ้าน — ตัดออกทั้งฝั่งจองและฝั่งรายงานให้ตัวเลขตรงกัน
@@ -519,7 +518,7 @@ async function buildDailySummary(kind) {
   if (kind === "evening") {
     const { checkOuts } = filterByDate(rows, today);
     const s = DS.buildEveningSummary({ date: today, expectedRooms: checkOuts.map((r) => r.room), logs });
-    return { kind, date: today, send: DS.shouldSendEvening(s), summary: s, text: DS.buildEveningMessage(s, formatThaiDate(today)), flex: DS.buildEveningFlex(s, formatThaiDate(today), { dashboardUrl: DAILY_SUMMARY_DASHBOARD_URL }) };
+    return { kind, date: today, send: DS.shouldSendEveningWith(s, cfg.evening), summary: s, text: DS.buildEveningMessage(s, formatThaiDate(today)), flex: DS.buildEveningFlex(s, formatThaiDate(today), { dashboardUrl: DAILY_SUMMARY_DASHBOARD_URL }) };
   }
   const plan = DS.buildMorningPlan({
     today: filterByDate(rows, today),
@@ -527,13 +526,42 @@ async function buildDailySummary(kind) {
   });
   return { kind, date: today, send: DS.shouldSendMorning(plan), summary: plan, text: DS.buildMorningMessage(plan, formatThaiDate(today)), flex: DS.buildMorningFlex(plan, formatThaiDate(today), { dashboardUrl: DAILY_SUMMARY_DASHBOARD_URL }) };
 }
+
+// ── ตั้งค่า/ประวัติ (เก็บใน Redis) ──
+const DAILY_SETTINGS_KEY = "daily_summary_settings";
+let _dailySettingsCache = { at: 0, v: null };
+async function loadDailySettings() {
+  if (_dailySettingsCache.v && Date.now() - _dailySettingsCache.at < 30000) return _dailySettingsCache.v;
+  const v = DS.normalizeSettings(await redisGet(DAILY_SETTINGS_KEY));
+  _dailySettingsCache = { at: Date.now(), v };
+  return v;
+}
+async function saveDailySettings(raw) {
+  const v = DS.normalizeSettings(raw);
+  if (!(await redisSet(DAILY_SETTINGS_KEY, v))) throw new Error("บันทึกการตั้งค่าไม่สำเร็จ (Redis ไม่พร้อมใช้งาน)");
+  _dailySettingsCache = { at: Date.now(), v };
+  return v;
+}
+const historyKey = (date, kind) => "daily_summary_hist_" + date + "_" + kind;
+async function recordDailyHistory(entry) { try { await redisSet(historyKey(entry.date, entry.kind), entry); } catch (_) {} }
+async function loadDailyHistory(days) {
+  const n = Math.min(Math.max(Number(days) || 14, 1), 30);
+  const keys = [];
+  for (let i = 0; i < n; i++) for (const kind of ["evening", "morning"]) keys.push([bangkokDate(-i), kind]);
+  const got = await Promise.all(keys.map(([d, k]) => redisGet(historyKey(d, k))));
+  return got.filter(Boolean);
+}
 // dryRun = สร้างข้อความอย่างเดียว ไม่ส่ง ไม่บันทึก flag | force = ส่งแม้กติกาบอกว่าไม่ต้องส่ง (ใช้ทดสอบ)
 async function runDailySummary(kind, { dryRun = false, force = false } = {}) {
   const flagKey = "daily_summary_" + kind + "_last";
   const today = bangkokDate(0);
-  // ตัดสินใจแล้ววันละครั้ง (ส่งหรือเลือกไม่ส่ง) — กัน cron + backstop ยิงซ้ำ
-  if (!dryRun && !force && (await redisGet(flagKey)) === today) return { kind, skipped: "decided-today" };
-  const r = await buildDailySummary(kind);
+  const settings = await loadDailySettings();
+  if (!dryRun && !force) {
+    if (!settings[kind].enabled) return { kind, skipped: "disabled" };
+    // ตัดสินใจแล้ววันละครั้ง (ส่งหรือเลือกไม่ส่ง) — กัน cron + backstop ยิงซ้ำ
+    if ((await redisGet(flagKey)) === today) return { kind, skipped: "decided-today" };
+  }
+  const r = await buildDailySummary(kind, settings);
   if (dryRun) return r;
   if (!ADMIN_USER) throw new Error("ไม่ได้ตั้ง ADMIN_USER_ID");
   const sent = r.send || force;
@@ -546,14 +574,38 @@ async function runDailySummary(kind, { dryRun = false, force = false } = {}) {
       catch (e) { console.warn("[daily-summary] flex push failed, fallback to text: " + e.message); await linePush(ADMIN_USER, [textMsg]); }
     }
   }
-  await redisSet(flagKey, today);
+  // ส่งทดสอบด้วยมือ (force) ไม่นับเป็นการตัดสินใจของวัน และไม่บันทึกประวัติทับของจริง
+  if (!force) {
+    await redisSet(flagKey, today);
+    await recordDailyHistory(DS.historyEntry({ kind, date: today, decision: sent ? "sent" : "skipped", reason: sent ? "" : "ไม่มีเรื่องต้องส่งตามกติกา", summary: r.summary, text: sent ? r.text : "" }));
+  }
   return Object.assign({}, r, { sent });
 }
+const _dsErrNotified = new Set();
 async function runDailySummarySafe(kind) {
   try { const r = await runDailySummary(kind); console.log("[daily-summary]", kind, r.sent ? "sent" : (r.skipped || "not needed")); }
   catch (e) {
     console.error("[daily-summary] " + kind + " error: " + e.message);
-    try { await linePush(ADMIN_USER, [{ type: "text", text: "⚠️ ระบบสรุปประจำวัน (" + kind + ") ขัดข้อง (เป็นปัญหาทางเทคนิค)\n" + e.message }]); } catch (_) {}
+    // แจ้งแอดมินครั้งเดียวต่อวันต่อชนิด (ตัวจับเวลาลองใหม่ได้ทุก 10 นาทีในช่วง 60 นาที — ห้ามแจ้งซ้ำรัว ๆ)
+    const k = bangkokDate(0) + kind;
+    if (!_dsErrNotified.has(k)) {
+      _dsErrNotified.add(k);
+      await recordDailyHistory(DS.historyEntry({ kind, date: bangkokDate(0), decision: "error", reason: e.message }));
+      try { await linePush(ADMIN_USER, [{ type: "text", text: "⚠️ ระบบสรุปประจำวัน (" + kind + ") ขัดข้อง (เป็นปัญหาทางเทคนิค)\n" + e.message }]); } catch (_) {}
+    }
+  }
+}
+// ตัวจับเวลา: ทุกนาทีเช็คว่าถึงเวลาตามที่ตั้งในแดชบอร์ดหรือยัง (ภายใน 60 นาทีหลังเวลาที่ตั้ง) และลองใหม่ได้ทุก 10 นาที
+const _dsLastAttempt = {};
+async function dailySummaryTick() {
+  const settings = await loadDailySettings();
+  const hhmm = new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit" });
+  const nowMin = Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+  for (const kind of ["morning", "evening"]) {
+    if (!settings[kind].enabled || !DS.isDue(settings[kind].time, nowMin)) continue;
+    if (Date.now() - (_dsLastAttempt[kind] || 0) < 10 * 60000) continue;
+    _dsLastAttempt[kind] = Date.now();
+    await runDailySummarySafe(kind);
   }
 }
 
@@ -1967,8 +2019,19 @@ app.post("/api/test-hotel-job", adminAuth, async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-// เช็คว่า runHotelJob() (สรุปเช็คอิน/เอาท์ 19:00) รันสำเร็จวันนี้ไปหรือยัง
-// ใช้โดย GAS backstop trigger (triggerHotelJob19) — ถ้ารันไปแล้วจะได้ไม่ยิงซ้ำ
+// ── สรุปประจำวัน: API สำหรับแดชบอร์ด (ตั้งค่า / ประวัติ / ดูตัวอย่าง-ส่งทดสอบ) ──
+app.get("/api/daily-summary/settings", adminAuth, async (req, res) => {
+  try { res.json({ ok: true, settings: await loadDailySettings(), enabled: DAILY_SUMMARY_ENABLED }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.put("/api/daily-summary/settings", adminAuth, async (req, res) => {
+  try { res.json({ ok: true, settings: await saveDailySettings(req.body) }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.get("/api/daily-summary/history", adminAuth, async (req, res) => {
+  try { res.json({ ok: true, entries: await loadDailyHistory(req.query.days) }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 // ทดสอบสรุปประจำวัน: ค่าเริ่มต้น dryRun (สร้างข้อความ ไม่ส่ง) — ส่งจริงต้องระบุ {"dryRun": false}
 app.post("/api/daily-summary/run", adminAuth, async (req, res) => {
   const body = req.body || {};
@@ -1976,6 +2039,8 @@ app.post("/api/daily-summary/run", adminAuth, async (req, res) => {
   try { res.json(await runDailySummary(kind, { dryRun: body.dryRun !== false, force: body.force === true })); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
+// เช็คว่า runHotelJob() (สรุปเช็คอิน/เอาท์ 19:00) รันสำเร็จวันนี้ไปหรือยัง
+// ใช้โดย GAS backstop trigger (triggerHotelJob19) — ถ้ารันไปแล้วจะได้ไม่ยิงซ้ำ
 app.get("/api/hotel-job-status", adminAuth, async (req, res) => {
   try {
     const lastRun = await redisGet("hotel_job_last_run");
@@ -2111,9 +2176,8 @@ try {
 }
 // สรุปประจำวันถึงแอดมิน (ปิดไว้จนกว่าจะตั้ง DAILY_SUMMARY_ENABLED=true)
 if (DAILY_SUMMARY_ENABLED) {
-  cron.schedule(DAILY_MORNING_CRON, () => runDailySummarySafe("morning"), { timezone: "Asia/Bangkok" });
-  cron.schedule(DAILY_EVENING_CRON, () => runDailySummarySafe("evening"), { timezone: "Asia/Bangkok" });
-  console.log(`[CRON] daily summary registered: morning "${DAILY_MORNING_CRON}", evening "${DAILY_EVENING_CRON}"`);
+  cron.schedule("* * * * *", () => dailySummaryTick().catch((e) => console.error("[daily-summary] tick error:", e.message)), { timezone: "Asia/Bangkok" });
+  console.log("[CRON] daily summary ticker registered (เวลาส่งตามการตั้งค่าในแดชบอร์ด)");
 }
 // Rent reminder: วันที่ 8-15 เตือน / วันที่ 16-20 แจ้งสิ้นสุดสัญญา (ถ้ายังไม่ชำระ) เวลา 00:05 น.
 cron.schedule("5 0 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });

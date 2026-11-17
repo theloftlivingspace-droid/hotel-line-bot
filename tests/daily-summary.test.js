@@ -89,3 +89,27 @@ console.log("daily-summary tests OK");
   assert.ok(JSON.stringify(mp).includes("ทำก่อน"));
   console.log("daily-summary flex tests OK");
 })();
+
+// ── การตั้งค่า / เวลา ──
+(function settingsTests() {
+  const d = D.DEFAULT_SETTINGS;
+  assert.deepStrictEqual(D.normalizeSettings(null), d);
+  const n = D.normalizeSettings({ morning: { enabled: false, time: "06:05" }, evening: { time: "25:99", onlyWhenFlagged: false } });
+  assert.strictEqual(n.morning.enabled, false);
+  assert.strictEqual(n.morning.time, "06:05");
+  assert.strictEqual(n.evening.time, "18:30");              // เวลาผิดรูปแบบ → ใช้ค่าเริ่มต้น
+  assert.strictEqual(n.evening.onlyWhenFlagged, false);
+  assert.ok(!("onlyWhenFlagged" in n.morning));
+  assert.strictEqual(D.isDue("18:30", 18 * 60 + 29), false);
+  assert.strictEqual(D.isDue("18:30", 18 * 60 + 30), true);
+  assert.strictEqual(D.isDue("18:30", 19 * 60 + 29), true);   // ตื่นช้าก็ยังส่งตาม (catch-up 60 นาที)
+  assert.strictEqual(D.isDue("18:30", 19 * 60 + 30), false);
+  const calm = D.buildEveningSummary({ date: "2026-11-16", expectedRooms: ["113"], logs: D.parseCheckoutLog([HEAD.map(q).join(","), row({ uid: "x", date: "2026-11-16", room: "113" })].join("\n")) });
+  assert.strictEqual(D.shouldSendEveningWith(calm, { onlyWhenFlagged: true }), false);
+  assert.strictEqual(D.shouldSendEveningWith(calm, { onlyWhenFlagged: false }), true);   // ปิด "เฉพาะเมื่อมีเรื่อง" → ส่งทุกวันที่มีเช็คเอาท์
+  const none = D.buildEveningSummary({ date: "2026-11-17", expectedRooms: [], logs: [] });
+  assert.strictEqual(D.shouldSendEveningWith(none, { onlyWhenFlagged: false }), false);  // ไม่มีเช็คเอาท์/รายงาน → ไม่ส่งแน่นอน
+  const h = D.historyEntry({ kind: "evening", date: "2026-11-16", decision: "sent", text: "x".repeat(5000) });
+  assert.ok(h.text.length <= 1500 && h.at);
+  console.log("daily-summary settings tests OK");
+})();
