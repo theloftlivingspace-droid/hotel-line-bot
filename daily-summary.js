@@ -208,9 +208,42 @@ function buildMorningFlex(p, dateLabel, opts) {
   return fxBubble({ title: "แผนวันนี้", sub: dateLabel, rows, callouts, altText: alt, dashboardUrl: opts && opts.dashboardUrl });
 }
 
+
+// ─── การตั้งค่า (ตั้งจากแดชบอร์ด) + ตัวช่วยกำหนดเวลา/ประวัติ ───
+const DEFAULT_SETTINGS = {
+  morning: { enabled: true, time: "07:30" },
+  evening: { enabled: true, time: "18:30", onlyWhenFlagged: true },
+};
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+function normalizeSettings(raw) {
+  const r = raw && typeof raw === "object" ? raw : {};
+  const pick = (k, def) => {
+    const v = r[k] && typeof r[k] === "object" ? r[k] : {};
+    const out = { enabled: typeof v.enabled === "boolean" ? v.enabled : def.enabled, time: TIME_RE.test(String(v.time || "")) ? String(v.time) : def.time };
+    if ("onlyWhenFlagged" in def) out.onlyWhenFlagged = typeof v.onlyWhenFlagged === "boolean" ? v.onlyWhenFlagged : def.onlyWhenFlagged;
+    return out;
+  };
+  return { morning: pick("morning", DEFAULT_SETTINGS.morning), evening: pick("evening", DEFAULT_SETTINGS.evening) };
+}
+const minutesOf = (hhmm) => { const [h, m] = String(hhmm).split(":").map(Number); return h * 60 + m; };
+// ถึงเวลาส่งหรือยัง: ภายใน windowMin นาทีหลังเวลาที่ตั้ง (ถ้าบริการหลับแล้วตื่นทีหลังก็ยังส่งตาม — กันส่งซ้ำด้วยแฟลกรายวันที่อื่น)
+function isDue(hhmm, nowMinutes, windowMin) {
+  const m = minutesOf(hhmm), w = windowMin == null ? 60 : windowMin;
+  return nowMinutes >= m && nowMinutes < m + w;
+}
+// onlyWhenFlagged=true → ใช้กติกาเดิม ; false → ส่งทุกวันที่มีเช็คเอาท์หรือมีรายงาน
+function shouldSendEveningWith(s, evCfg) {
+  return evCfg && evCfg.onlyWhenFlagged === false ? s.expected > 0 || s.inspected > 0 : shouldSendEvening(s);
+}
+// ประวัติ: เก็บทีละวัน+ชนิด (ค่าเล็ก ๆ) ไม่ใส่ชื่อแขก
+function historyEntry({ kind, date, decision, reason, summary, text, at }) {
+  return { at: at || new Date().toISOString(), kind, date, decision, reason: reason || "", summary: summary || null, text: text ? String(text).slice(0, 1500) : "" };
+}
+
 module.exports = {
   parseCsv, parseCheckoutLog, dedupeLatest, isReadyForGuests, followUpReasons,
   buildEveningSummary, shouldSendEvening, buildEveningMessage,
   buildMorningPlan, shouldSendMorning, buildMorningMessage, roomNum,
   buildEveningFlex, buildMorningFlex,
+  DEFAULT_SETTINGS, normalizeSettings, isDue, shouldSendEveningWith, historyEntry,
 };
