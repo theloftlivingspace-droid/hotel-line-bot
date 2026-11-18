@@ -160,6 +160,7 @@ function buildMorningMessage(p, dateLabel, opts) {
   if (p.stayOvers) m += "🔁 ต่อพัก " + p.stayOvers + " ห้อง\n";
   if (p.turnover.length) m += "\n⏱ ทำก่อน (เช็คเอาท์แล้วมีแขกใหม่เข้าวันเดียวกัน): ห้อง " + p.turnover.join(", ") + "\n";
   if (!group && o.prices) m += "\n💰 ราคาเป้าหมายคืนนี้: " + formatPrices(o.prices) + "\n";
+  if (!group && o.priceWarning) m += "\n⚠️ " + o.priceWarning + "\n";
   if (!group && p.carry.length) {
     m += "\n📌 ค้างจากเมื่อวาน\n";
     for (const c of p.carry) m += "• ห้อง " + c.room + " — " + c.reasons.join(" / ") + "\n";
@@ -211,6 +212,7 @@ function buildMorningFlex(p, dateLabel, opts) {
   const callouts = [];
   if (p.turnover.length) callouts.push(fxCallout("⏱ ทำก่อน", "ห้อง " + p.turnover.join(", ") + " เช็คเอาท์แล้วมีแขกใหม่เข้าวันเดียวกัน", C.amberBg, C.amberTx));
   if (!group && o.prices) callouts.push(fxCallout("💰 ราคาเป้าหมายคืนนี้", formatPrices(o.prices), "#EAF0FA", C.navy));
+  if (!group && o.priceWarning) callouts.push(fxCallout("⚠️ ระบบตั้งราคา", o.priceWarning, C.redBg, C.redTx));
   if (!group && p.carry.length) callouts.push(fxCallout("📌 ค้างจากเมื่อวาน", p.carry.map((c) => "ห้อง " + c.room + " — " + c.reasons.join(" / ")).join("\n"), C.redBg, C.redTx));
   const alt = "แผนวันนี้: เช็คเอาท์ " + p.checkOuts + " ห้อง, เช็คอิน " + p.checkIns + " ห้อง" + (p.turnover.length ? ", ทำก่อน ห้อง " + p.turnover.join(", ") : "");
   // ข้อความถึงกลุ่มแม่บ้านไม่มีปุ่มแดชบอร์ด
@@ -267,20 +269,35 @@ function toIsoDate(raw, dateOrder) {
   const [d, mo] = dateOrder === "mdy" ? [m[2], m[1]] : [m[1], m[2]];
   return m[3] + "-" + mo.padStart(2, "0") + "-" + d.padStart(2, "0");
 }
-// คืน { Luxury: 1900, ... } ของวันที่ระบุ — ไม่พบข้อมูลของวันนั้น/โครงสร้างผิด → null (ไม่เดา ไม่ใช้ราคาเก่า)
-function parseTargetRates(csvText, date, dateOrder) {
-  const rows = parseCsv(csvText);
-  if (rows.length < 2) return null;
-  const h = rows[0].map((x) => x.trim());
-  const iD = h.indexOf("Date"), iT = h.indexOf("RoomType"), iR = h.indexOf("Rate");
-  if (iD < 0 || iT < 0 || iR < 0) return null;
-  const out = {};
+// อ่านแถวของวันที่ระบุจากตาราง Target_Rates (rows = array ของแถว รวมหัวตาราง)
+// คืน { rates, updatedAt, ageHours, stale } — rates = null เมื่อไม่พบข้อมูลของวันนั้น/โครงสร้างผิด (ไม่เดา)
+// stale = true เมื่อ UpdatedAt ใหม่สุดของแถววันนั้นเก่ากว่า maxAgeHours (ระบบตั้งราคาอาจหยุดทำงาน → ไม่ควรเอาราคาเก่ามาเรียกว่า "คืนนี้")
+function readTargetRates(rows, date, dateOrder, opts) {
+  const o = opts || {}, maxAge = o.maxAgeHours == null ? 36 : o.maxAgeHours;
+  const none = { rates: null, updatedAt: "", ageHours: null, stale: false };
+  if (!Array.isArray(rows) || rows.length < 2) return none;
+  const h = rows[0].map((x) => String(x == null ? "" : x).trim());
+  const iD = h.indexOf("Date"), iT = h.indexOf("RoomType"), iR = h.indexOf("Rate"), iU = h.indexOf("UpdatedAt");
+  if (iD < 0 || iT < 0 || iR < 0) return none;
+  const rates = {};
+  let newest = 0;
   for (const r of rows.slice(1)) {
     if (toIsoDate(r[iD], dateOrder) !== date) continue;
-    const rate = Number(String(r[iR]).replace(/[^\d.]/g, ""));
-    if (r[iT] && rate > 0) out[r[iT].trim()] = Math.round(rate);
+    const rate = Number(String(r[iR] == null ? "" : r[iR]).replace(/[^\d.]/g, ""));
+    if (r[iT] && rate > 0) {
+      rates[String(r[iT]).trim()] = Math.round(rate);
+      const t = iU >= 0 ? Date.parse(String(r[iU] || "")) : NaN;
+      if (t > newest) newest = t;
+    }
   }
-  return Object.keys(out).length ? out : null;
+  if (!Object.keys(rates).length) return none;
+  if (!newest) return { rates, updatedAt: "", ageHours: null, stale: false };    // ไม่มี UpdatedAt ให้ตรวจ — ใช้ได้แต่ตรวจความสดไม่ได้
+  const ageHours = ((o.nowMs == null ? Date.now() : o.nowMs) - newest) / 3600000;
+  return { rates, updatedAt: new Date(newest).toISOString(), ageHours, stale: ageHours > maxAge };
+}
+// เวอร์ชัน CSV (คงไว้สำหรับเทสต์/การใช้เดิม): คืนเฉพาะแผนที่ราคา หรือ null
+function parseTargetRates(csvText, date, dateOrder) {
+  return readTargetRates(parseCsv(csvText), date, dateOrder, { maxAgeHours: Infinity }).rates;
 }
 function formatPrices(map) {
   const keys = ROOM_TYPE_ORDER.filter((k) => k in map).concat(Object.keys(map).filter((k) => !ROOM_TYPE_ORDER.includes(k)));
@@ -321,5 +338,5 @@ module.exports = {
   buildMorningPlan, shouldSendMorning, buildMorningMessage, roomNum,
   buildEveningFlex, buildMorningFlex,
   DEFAULT_SETTINGS, normalizeSettings, isDue, shouldSendEveningWith, historyEntry,
-  toIsoDate, parseTargetRates, formatPrices, validateAiNotes, applyAiNotes,
+  toIsoDate, parseTargetRates, readTargetRates, formatPrices, validateAiNotes, applyAiNotes,
 };

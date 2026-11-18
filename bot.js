@@ -495,9 +495,11 @@ const CHECKOUT_LOG_GID = process.env.CHECKOUT_LOG_GID || "335713576";
 // DAILY_SUMMARY_FORMAT=flex (ค่าเริ่มต้น, การ์ด) | text ; DAILY_SUMMARY_DASHBOARD_URL = ลิงก์ปุ่ม "เปิดแดชบอร์ด" (https เท่านั้น; ค่าเริ่มต้น = the-loft-admin.vercel.app; ตั้งเป็นค่าว่างเพื่อซ่อนปุ่ม)
 const DAILY_SUMMARY_FORMAT = process.env.DAILY_SUMMARY_FORMAT || "flex";
 const DAILY_SUMMARY_DASHBOARD_URL = process.env.DAILY_SUMMARY_DASHBOARD_URL || "https://the-loft-admin.vercel.app/";
-// ราคาเป้าหมายคืนนี้: ชีต Target_Rates ของ lh-rate-automation (ต้องแชร์แบบมีลิงก์ ถึงจะอ่านได้) — ถ้าอ่านไม่ได้จะข้ามส่วนนี้
+// ราคาเป้าหมายคืนนี้: ชีต Target_Rates ของ lh-rate-automation — อ่านผ่าน Google Sheets API ด้วย service account เดียวกับชีตจอง
+// (ชีตเป็น Private → ต้องแชร์ชีตให้อีเมลของ service account แบบ Viewer) ถ้าอ่านไม่ได้จะข้ามส่วนนี้และเตือนในประวัติ
 const TARGET_RATES_SHEET_ID = process.env.TARGET_RATES_SHEET_ID || "1gjYsvg7YZR7hvjfsQPIy78TJhK49RKIDFQn90bREus8";
 const TARGET_RATES_DATE_ORDER = process.env.TARGET_RATES_DATE_ORDER || "dmy"; // รูปแบบวันที่ถ้าชีตแปลงเป็น d/m/y หรือ m/d/y
+const TARGET_RATES_MAX_AGE_H = Number(process.env.TARGET_RATES_MAX_AGE_HOURS) || 36;   // เก่ากว่านี้ = ระบบตั้งราคาอาจหยุดทำงาน → ไม่แสดงราคา + เตือนแอดมิน
 const DAILY_SUMMARY_AI_MODEL = process.env.DAILY_SUMMARY_AI_MODEL || "claude-sonnet-5-5";
 
 function bangkokDate(offsetDays) {
@@ -513,15 +515,9 @@ async function fetchCheckoutLogCsv() {
     return await res.text();
   } finally { clearTimeout(timer); }
 }
-async function fetchTargetRatesCsv() {
-  const url = `https://docs.google.com/spreadsheets/d/${TARGET_RATES_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Target_Rates`;
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 15000);
-  try {
-    const res = await fetch(url, { signal: ctl.signal });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return await res.text();
-  } finally { clearTimeout(timer); }
+async function fetchTargetRatesRows() {
+  const res = await getSheets().spreadsheets.values.get({ spreadsheetId: TARGET_RATES_SHEET_ID, range: "Target_Rates!A:F" });
+  return res.data.values || [];
 }
 // ให้ Claude สรุปหมายเหตุตรวจห้อง — ส่งเฉพาะเลขห้อง+ข้อความหมายเหตุ (ไม่มีชื่อแขก) ; ผลลัพธ์ผ่านตัวตรวจสเปกก่อนใช้ ; ล้มเหลว = คืน null แล้วใช้หมายเหตุดิบแทน
 async function aiSummarizeNotes(notes) {
@@ -565,18 +561,23 @@ async function buildDailySummary(kind, settings) {
     return { kind, date: today, send: DS.shouldSendEveningWith(s, cfg.evening), summary: s, warnings, text: DS.buildEveningMessage(s, label), flex: DS.buildEveningFlex(s, label, { dashboardUrl: DAILY_SUMMARY_DASHBOARD_URL }) };
   }
   const plan = DS.buildMorningPlan({ today: filterByDate(rows, today), yesterdayLogs: DS.dedupeLatest(logs.filter((l) => l.date === bangkokDate(-1))) });
-  let prices = null;
+  let prices = null, priceWarning = "";
   if (cfg.morning.includePrices) {
     try {
-      prices = DS.parseTargetRates(await fetchTargetRatesCsv(), today, TARGET_RATES_DATE_ORDER);
-      if (!prices) warnings.push("ไม่พบราคาเป้าหมายของวันนี้ใน Target_Rates");
-    } catch (e) { warnings.push("อ่านราคาเป้าหมายไม่ได้: " + e.message); }
+      const info = DS.readTargetRates(await fetchTargetRatesRows(), today, TARGET_RATES_DATE_ORDER, { nowMs: Date.now(), maxAgeHours: TARGET_RATES_MAX_AGE_H });
+      if (!info.rates) { priceWarning = "ไม่พบราคาเป้าหมายของวันนี้ในชีต Target_Rates"; }
+      else if (info.stale) priceWarning = "ราคาเป้าหมายไม่ได้อัปเดตมา " + Math.floor(info.ageHours / 24 * 10) / 10 + " วัน (ล่าสุด " + info.updatedAt.slice(0, 16).replace("T", " ") + " UTC) — ระบบตั้งราคาอาจหยุดทำงาน จึงไม่แสดงราคา";
+      else prices = info.rates;
+    } catch (e) {
+      priceWarning = "อ่านราคาเป้าหมายไม่ได้: " + e.message + (/permission|403|caller does not have|not found/i.test(e.message) ? " (แชร์ชีต Target_Rates ให้ service account ของบอทแบบ Viewer)" : "");
+    }
+    if (priceWarning) warnings.push(priceWarning);
   }
   const dash = { dashboardUrl: DAILY_SUMMARY_DASHBOARD_URL };
   const hasGroupContent = plan.checkIns + plan.checkOuts + plan.stayOvers > 0;   // ข้อความถึงกลุ่มไม่มีเรื่องค้าง/ราคา → ต้องมีเช็คอิน/เอาท์ถึงจะส่ง
   return {
     kind, date: today, send: DS.shouldSendMorning(plan), summary: plan, warnings, hasGroupContent,
-    text: DS.buildMorningMessage(plan, label, { prices }), flex: DS.buildMorningFlex(plan, label, Object.assign({ prices }, dash)),
+    text: DS.buildMorningMessage(plan, label, { prices, priceWarning }), flex: DS.buildMorningFlex(plan, label, Object.assign({ prices, priceWarning }, dash)),
     groupText: DS.buildMorningMessage(plan, label, { audience: "group" }), groupFlex: DS.buildMorningFlex(plan, label, { audience: "group" }),
   };
 }

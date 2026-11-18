@@ -173,3 +173,26 @@ console.log("daily-summary tests OK");
   assert.strictEqual(D.shouldSendEvening(D.applyAiNotes(calm, { "103": { summary: "แก้วแตก 1 ใบ", needsAttention: true } })), true);
   console.log("daily-summary group/price/AI tests OK");
 })();
+
+// ── ราคาเป้าหมาย: ตรวจความสด (ระบบตั้งราคาหยุดทำงาน → ไม่แสดงราคาเก่า) ──
+(function staleRatesTests() {
+  const rows = [["Date", "RoomType", "Rate", "Occ%", "DaysAhead", "UpdatedAt"], ["2026-11-18", "Luxury", 800, 92, 5, "2026-11-13T10:04:08.123Z"], ["2026-11-18", "Retro", "750", 92, 5, "2026-11-13T10:04:08.123Z"]];
+  const now = Date.parse("2026-11-18T01:00:00Z");
+  const r = D.readTargetRates(rows, "2026-11-18", "dmy", { nowMs: now, maxAgeHours: 36 });
+  assert.deepStrictEqual(r.rates, { Luxury: 800, Retro: 750 });
+  assert.strictEqual(r.stale, true);                                                   // อัปเดตล่าสุด 13 พ.ย. → เก่า ~4.6 วัน
+  assert.ok(r.ageHours > 100 && r.ageHours < 120);
+  const fresh = D.readTargetRates(rows, "2026-11-18", "dmy", { nowMs: Date.parse("2026-11-13T20:00:00Z"), maxAgeHours: 36 });
+  assert.strictEqual(fresh.stale, false);
+  assert.strictEqual(D.readTargetRates(rows, "2026-12-30", "dmy", { nowMs: now }).rates, null);   // ไม่มีวันนั้น
+  assert.strictEqual(D.readTargetRates([["a"]], "2026-11-18", "dmy").rates, null);
+  const noU = D.readTargetRates([["Date", "RoomType", "Rate"], ["2026-11-18", "Luxury", 800]], "2026-11-18", "dmy", { nowMs: now });
+  assert.deepStrictEqual(noU.rates, { Luxury: 800 }); assert.strictEqual(noU.stale, false);        // ไม่มี UpdatedAt → ตรวจความสดไม่ได้ แต่ไม่ปฏิเสธ
+  // คำเตือนแสดงในข้อความแอดมินเท่านั้น
+  const plan = D.buildMorningPlan({ today: { checkIns: [{ room: "113" }], checkOuts: [], stayOvers: [] }, yesterdayLogs: [] });
+  assert.ok(D.buildMorningMessage(plan, "x", { priceWarning: "ระบบตั้งราคาอาจหยุดทำงาน" }).includes("⚠️ ระบบตั้งราคาอาจหยุดทำงาน"));
+  assert.ok(!D.buildMorningMessage(plan, "x", { audience: "group", priceWarning: "ระบบตั้งราคา" }).includes("ระบบตั้งราคา"));
+  assert.ok(JSON.stringify(D.buildMorningFlex(plan, "x", { priceWarning: "หยุดทำงาน" })).includes("หยุดทำงาน"));
+  assert.ok(!JSON.stringify(D.buildMorningFlex(plan, "x", { audience: "group", priceWarning: "หยุดทำงาน" })).includes("หยุดทำงาน"));
+  console.log("daily-summary stale-rates tests OK");
+})();
