@@ -30,6 +30,13 @@ check(ev);
 assert.strictEqual(ev.contents.body.contents.length, 3);
 check(FC.buildEventFlex({ title: "t", info: [], callout: { title: "c", bg: FC.C.amberBg, fg: FC.C.amberTx }, note: "โน้ต" }));
 
+// ป้ายเลขห้องต้องมีแต่เลขห้อง (ไม่ถูกตัด) ชื่อห้องย้ายไปบรรทัดย่อย
+const rmItem = FC.fxRoomItem({ room: "204 Allure", name: "Guest", meta: "👤 1 ท่าน", note: "" });
+assert.strictEqual(rmItem.contents[0].contents[0].text, "204");
+assert.ok(JSON.stringify(rmItem.contents[1]).includes("Allure  ·  👤 1 ท่าน"));
+assert.strictEqual(FC.fxRoomItem({ room: "363 Mycondo", name: "G" }).contents[0].contents[0].text, "363");
+assert.strictEqual(FC.fxRoomItem({ room: "", name: "G" }).contents[0].contents[0].text, "-");
+
 // ปุ่มแดชบอร์ดเฉพาะ https
 assert.ok(FC.fxBubble({ title: "t", sub: "s", rows: [FC.fx("a")], dashboardUrl: "https://x.co" }).contents.footer);
 assert.strictEqual(FC.fxBubble({ title: "t", sub: "s", rows: [FC.fx("a")], dashboardUrl: "http://x.co" }).contents.footer, undefined);

@@ -35,14 +35,18 @@ const fxSection = (label) => ({
 });
 // รายการห้อง: ป้ายเลขห้อง navy/ทองด้านซ้าย + ชื่อแขก / จำนวนแขก / โน้ต
 function fxRoomItem({ room, name, meta, note }) {
+  // room อาจเป็น "204 Allure" → ป้ายแสดงเฉพาะเลขห้อง ส่วนชื่อห้องไปอยู่บรรทัดย่อยใต้ชื่อแขก (กันป้ายถูกตัดเป็น "20…")
+  const parts = String(room == null ? "" : room).trim().split(/\s+/);
+  const num = parts[0] || "-", kind = parts.slice(1).join(" ");
+  const sub = [kind, meta].filter(Boolean).join("  ·  ");
   const right = [fx(name, { weight: "bold" })];
-  if (meta) right.push(fx(meta, { size: "xs", color: C.mute }));
+  if (sub) right.push(fx(sub, { size: "xs", color: C.mute }));
   if (note) right.push(fx("📝 " + clip(String(note).replace(/\s+/g, " "), 120), { size: "xs", color: C.amberTx }));
   return {
     type: "box", layout: "horizontal", spacing: "md", backgroundColor: C.cream, cornerRadius: "md", paddingAll: "8px", alignItems: "center",
     contents: [
       { type: "box", layout: "vertical", flex: 0, width: "52px", backgroundColor: C.navy, cornerRadius: "md", paddingAll: "8px", justifyContent: "center",
-        contents: [fx(room, { color: C.gold, weight: "bold", align: "center", wrap: false })] },
+        contents: [fx(num, { color: C.gold, weight: "bold", align: "center", wrap: false })] },
       { type: "box", layout: "vertical", flex: 1, spacing: "xs", contents: right },
     ],
   };
