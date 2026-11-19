@@ -16,6 +16,7 @@ const {
   buildGuestIndex, lookupGuests, isGuestOnlyEmail, guestsLine, planGuestFills, guestColIndexes, guestsFromRow,
   writeGuestsToRow, writeGuestsToRows,
 } = require("./guests");
+const FC = require("./flex-cards"); // การ์ด navy/ทอง
 
 const GMAIL_USER   = process.env.GMAIL_USER;
 const GMAIL_PASS   = process.env.GMAIL_APP_PASSWORD;
@@ -336,7 +337,7 @@ async function redisDel(key) {
 async function linePushWithToken(to, text, token) {
   const res = await axios.post(
     "https://api.line.me/v2/bot/message/push",
-    { to, messages: [{ type: "text", text }] },
+    { to, messages: typeof text === "string" ? [{ type: "text", text }] : (Array.isArray(text) ? text : [text]) }, // text = สตริง | message object (เช่น Flex) | array
     { headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" } }
   );
   console.log("[linePush] OK to=" + to.slice(0,10) + "... status=" + res.status);
@@ -421,7 +422,17 @@ async function sendNewBookingToAdmin(res, roomLabel, status = null, availableRoo
     "\u{1F4CC} " + res.channel +
     depositLine + "\n" + sep + "\n" +
     hintLine;
-  await linePush(ADMIN_ID, msg);
+  const isAction = !roomLabel; // ต้องให้แอดมินตอบเลขห้อง → เน้นแถบสีเหลือง/แดง
+  const out = FC.useCards()
+    ? FC.buildEventFlex({
+        title: "🔔 จองใหม่!", sub: res.channel, tone: status === "conflict" ? "red" : (roomLabel ? "gold" : "amber"),
+        info: [["แขก", res.guest], ["จำนวนแขก", guestsLine(res.guests)], ["ห้อง", roomLine], ["เข้าพัก", thaiDate(res.checkIn) + " → " + thaiDate(res.checkOut)], ["มัดจำ", res.isAirbnb ? "" : "เก็บมัดจำ 3,000 บาท"]],
+        callout: isAction
+          ? { title: hintLine, bg: status === "conflict" ? FC.C.redBg : FC.C.amberBg, fg: status === "conflict" ? FC.C.redTx : FC.C.amberTx }
+          : { title: hintLine, bg: FC.C.greenBg, fg: FC.C.greenTx },
+        altText: "จองใหม่: " + res.guest + " " + thaiDate(res.checkIn) + " → " + thaiDate(res.checkOut) + " (" + res.channel + ")" })
+    : msg;
+  await linePush(ADMIN_ID, out);
   console.log("แจ้ง admin: " + res.resId + (roomLabel ? " [auto=" + roomLabel + "]" : status === "conflict" ? " [CONFLICT]" : ""));
 
   // ถ้าข้อความนี้รอให้แอดมินตอบเลขห้อง → จำ resId ของ booking นี้ไว้ใน Redis
@@ -445,7 +456,13 @@ async function sendUrgentToGroup(roomNumber, guest, checkIn, note, guests) {
     guestsLine(guests) + "\n" +
     "\u{1F4C5} เช็คอิน " + thaiDate(checkIn) +
     depositLine + "\n" + sep;
-  await linePush(LINE_GROUP, msg);
+  const out = FC.useCards()
+    ? FC.buildEventFlex({
+        title: "🚨 จองใหม่! " + dayLabel, sub: "ห้อง " + roomNumber, tone: "amber",
+        info: [["ห้อง", roomNumber], ["แขก", guest], ["จำนวนแขก", guestsLine(guests)], ["เช็คอิน", thaiDate(checkIn)]],
+        note: note || "", altText: "จองใหม่ " + dayLabel + " ห้อง " + roomNumber + " (" + guest + ")" })
+    : msg;
+  await linePush(LINE_GROUP, out);
   console.log("แจ้งกลุ่มแม่บ้าน (urgent): ห้อง " + roomNumber);
 }
 

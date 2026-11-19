@@ -163,26 +163,7 @@ function buildMorningMessage(p, dateLabel) {
 
 
 // ─── LINE Flex Message (การ์ดตามดีไซน์ AI-PMS: หัว navy/ทอง, แถวตัวเลข, กล่องเหลือง/แดง, ปุ่มเปิดแดชบอร์ด) ───
-const C = { navy: "#071B3D", gold: "#D9B25C", ink: "#1B2A41", sub: "#C9D3E3", amberBg: "#FFF1D6", amberTx: "#7A4B00", redBg: "#FDE7E7", redTx: "#8A1C1C" };
-const fx = (text, o) => Object.assign({ type: "text", text: String(text) || "-", wrap: true, size: "sm", color: C.ink }, o || {});
-const fxRow = (label, value) => ({ type: "box", layout: "horizontal", contents: [fx(label, { flex: 3 }), fx(value, { flex: 2, align: "end", weight: "bold" })] });
-const fxCallout = (title, body, bg, fg) => ({
-  type: "box", layout: "vertical", backgroundColor: bg, cornerRadius: "md", paddingAll: "10px", spacing: "xs",
-  contents: [fx(title, { weight: "bold", color: fg }), ...(body ? [fx(body, { size: "xs", color: fg })] : [])],
-});
-function fxBubble({ title, sub, rows, callouts, altText, dashboardUrl }) {
-  const bubble = {
-    type: "bubble", size: "mega",
-    header: { type: "box", layout: "vertical", backgroundColor: C.navy, paddingAll: "14px", spacing: "xs",
-      contents: [fx(title, { color: C.gold, weight: "bold", size: "md" }), fx(sub, { color: C.sub, size: "xs" })] },
-    body: { type: "box", layout: "vertical", spacing: "md", paddingAll: "14px", contents: [...rows, ...callouts] },
-  };
-  if (dashboardUrl && /^https:\/\//.test(dashboardUrl)) {
-    bubble.footer = { type: "box", layout: "vertical", paddingAll: "12px",
-      contents: [{ type: "button", style: "primary", color: C.gold, height: "sm", action: { type: "uri", label: "เปิดแดชบอร์ด", uri: dashboardUrl } }] };
-  }
-  return { type: "flex", altText: clip(altText, 380), contents: bubble };
-}
+const { C, fx, fxRow, fxCallout, fxBubble } = require("./flex-cards"); // การ์ด navy/ทอง กลาง — ใช้ร่วมกับรายงานอื่นของบอท
 
 function buildEveningFlex(s, dateLabel, opts) {
   const rows = [fxRow("ตรวจแล้ว", s.inspected + (s.expected ? " จาก " + s.expected : "") + " ห้อง"), fxRow("พร้อมรับแขก", s.ready.length + " ห้อง")];

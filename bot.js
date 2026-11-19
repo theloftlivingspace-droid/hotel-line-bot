@@ -26,6 +26,7 @@ const cron    = require("node-cron");
 const { google } = require("googleapis");
 const { guestsLine, guestColIndexes, guestsFromRow, nameKey } = require("./guests");
 const DS = require("./daily-summary");
+const FC = require("./flex-cards"); // การ์ด navy/ทอง (BOT_CARD_FORMAT=text เพื่อกลับเป็นข้อความธรรมดา)
 const { AsyncLocalStorage } = require("async_hooks");
 
 // เก็บ token ของ OA ที่ "เป็นเจ้าของ" event ปัจจุบันไว้ตาม async context ของ request นั้นๆ
@@ -476,8 +477,11 @@ async function runHotelJob() {
     const tomorrow = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
     const rows = await fetchSheetData();
     const { checkIns, checkOuts, stayOvers } = filterByDate(rows, tomorrow);
-    const msg = buildHotelMessage(checkIns, checkOuts, tomorrow, stayOvers);
-    await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    const toItem = (r) => ({ room: r.room, name: r.guest, meta: guestsLine(r.guests), note: r.note });
+    const out = FC.useCards()
+      ? FC.buildMaidPlanFlex({ checkIns: checkIns.map(toItem), checkOuts: checkOuts.map(toItem), stayOvers: stayOvers.map(toItem), dateLabel: formatThaiDate(tomorrow) })
+      : { type: "text", text: buildHotelMessage(checkIns, checkOuts, tomorrow, stayOvers) };
+    await linePush(LINE_GROUP, [out]);
     console.log("ส่ง LINE สำเร็จ");
     const todayStr = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" }); // YYYY-MM-DD
     await redisSet("hotel_job_last_run", todayStr);
@@ -1806,8 +1810,13 @@ app.post("/api/send-maid-note", adminAuth, async (req, res) => {
   if (guest)   lines.push(`👤 ${guest}`);
   lines.push(`📝 ${note}`);
   const msg = lines.join("\n");
+  const out = FC.useCards()
+    ? FC.buildEventFlex({ title: "📝 โน้ตถึงแม่บ้าน", sub: room ? "ห้อง " + room : "แจ้งจากแอดมิน", tone: "amber",
+        info: [["ห้อง", room], ["แขก", guest]], callout: { title: "ข้อความ", body: note, bg: FC.C.amberBg, fg: FC.C.amberTx },
+        altText: "โน้ตถึงแม่บ้าน" + (room ? " ห้อง " + room : "") + ": " + FC.clip(note, 200) })
+    : { type: "text", text: msg };
   try {
-    await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    await linePush(LINE_GROUP, [out]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
@@ -1877,15 +1886,21 @@ app.post("/api/cancel-notify", adminAuth, async (req, res) => {
   }
   // set ก่อนส่ง (ไม่ใช่หลัง) เพื่อกัน race เมื่อมี 2 request เข้ามาพร้อมกัน
   recentCancelNotifies.set(dedupKey, Date.now());
+  const gLine = guestsLine(await resolveGuests(req.body));
   const msg = [
     "🚫 ยกเลิกการจอง",
     `🏠 ห้อง ${room}`,
     `👤 ${guest}`,
-    guestsLine(await resolveGuests(req.body)),
+    gLine,
     `📅 ${checkin} → ${checkout}`,
   ].join("\n");
+  const out = FC.useCards()
+    ? FC.buildEventFlex({ title: "🚫 ยกเลิกการจอง", sub: "ห้อง " + room, tone: "red",
+        info: [["ห้อง", room], ["แขก", guest], ["จำนวนแขก", gLine], ["เข้าพัก", `${checkin} → ${checkout}`]],
+        altText: `ยกเลิกการจอง ห้อง ${room} (${guest}) ${checkin} → ${checkout}` })
+    : { type: "text", text: msg };
   try {
-    await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    await linePush(LINE_GROUP, [out]);
     res.json({ ok: true });
   } catch (e) {
     recentCancelNotifies.delete(dedupKey); // ส่งไม่สำเร็จ ให้ retry ได้
@@ -1921,15 +1936,21 @@ app.post("/api/checkout-notify", adminAuth, async (req, res) => {
     return res.json({ ok: true, skipped: true, reason: "duplicate checkout-notify (same room/guest/dates already sent)" });
   }
 
+  const gLine = guestsLine(await resolveGuests(req.body));
   const msg = [
     "🧳 Checkout แล้ว",
     `🏠 ห้อง ${room}`,
     `👤 ${guest}`,
-    guestsLine(await resolveGuests(req.body)),
+    gLine,
     `📅 ${checkin} → ${checkout}`,
   ].join("\n");
+  const out = FC.useCards()
+    ? FC.buildEventFlex({ title: "🧳 Checkout แล้ว", sub: "ห้อง " + room, tone: "green",
+        info: [["ห้อง", room], ["แขก", guest], ["จำนวนแขก", gLine], ["เข้าพัก", `${checkin} → ${checkout}`]],
+        altText: `Checkout แล้ว ห้อง ${room} (${guest})` })
+    : { type: "text", text: msg };
   try {
-    await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    await linePush(LINE_GROUP, [out]);
     recentCheckoutNotifies.set(dedupKey, Date.now());
     res.json({ ok: true });
   } catch (e) {
@@ -1968,8 +1989,16 @@ app.post("/api/room-move-notify", adminAuth, async (req, res) => {
         `🏠 ห้อง ${oldRoom} → ${newRoom}`,
       ].filter(Boolean).join("\n");
 
+  const out = FC.useCards()
+    ? FC.buildEventFlex({
+        title: splitBooking ? "📍 ย้ายห้องด่วน (เช็คอินแล้ว)" : "📍 แก้ไขห้องด่วน", sub: guest, tone: "amber",
+        info: splitBooking
+          ? [["ResId", resId], ["แขก", guest], ["จำนวนแขก", guestsText], ["เช็คเอาท์", `ห้อง ${oldRoom} วันที่ ${effectiveDate}`], ["เช็คอิน", `ห้อง ${newRoom} วันเดียวกัน${segmentBResId ? ` (ResId ${segmentBResId})` : ""}`]]
+          : [["ResId", resId], ["แขก", guest], ["จำนวนแขก", guestsText], ["ห้อง", `${oldRoom} → ${newRoom}`]],
+        altText: splitBooking ? `ย้ายห้องด่วน ${guest}: ห้อง ${oldRoom} → ${newRoom}` : `แก้ไขห้องด่วน ${guest}: ห้อง ${oldRoom} → ${newRoom}` })
+    : { type: "text", text: msg };
   try {
-    await linePush(LINE_GROUP, [{ type: "text", text: msg }]);
+    await linePush(LINE_GROUP, [out]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
