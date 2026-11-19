@@ -10,8 +10,6 @@ const C = {
   redBg: "#FDE7E7", redTx: "#8A1C1C",
   greenBg: "#E4F3E8", greenTx: "#1D6A3B",
 };
-// แถบสีบางใต้หัวการ์ด บอกชนิดเหตุการณ์ (ทองเป็นค่ามาตรฐาน)
-const TONE = { gold: C.gold, red: "#D64545", green: "#3E9B63", amber: "#E0A030" };
 
 const useCards = () => (process.env.BOT_CARD_FORMAT || "flex").toLowerCase() !== "text";
 const clip = (s, n) => { s = String(s == null ? "" : s); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
@@ -51,9 +49,8 @@ function fxRoomItem({ room, name, meta, note }) {
 }
 const fxGroup = (heading, items) => ({ type: "box", layout: "vertical", spacing: "sm", contents: [fxSection(heading), ...items.map(fxRoomItem)] });
 
-function fxBubble({ title, sub, rows, blocks, callouts, altText, dashboardUrl, footerNote, tone }) {
+function fxBubble({ title, sub, rows, blocks, callouts, altText, dashboardUrl, footerNote }) {
   const header = [fx(title, { color: C.gold, weight: "bold", size: "md" }), fx(sub, { color: C.sub, size: "xs" })];
-  if (tone && TONE[tone]) header.push({ type: "box", layout: "vertical", height: "3px", margin: "md", backgroundColor: TONE[tone], cornerRadius: "xs", contents: [{ type: "filler" }] });
   const body = [...(rows || []), ...(blocks || []), ...(callouts || [])];
   const bubble = {
     type: "bubble", size: "mega",
@@ -78,19 +75,19 @@ function buildMaidPlanFlex({ checkIns, checkOuts, stayOvers, dateLabel }) {
   if (checkOuts.length) blocks.push(fxGroup("🧹 เช็คเอาท์ (" + checkOuts.length + " ห้อง)", checkOuts));
   if (stayOvers.length) blocks.push(fxGroup("🔁 ต่อพักห้องเดิม — ไม่ต้องทำความสะอาดใหญ่", stayOvers));
   const alt = "รายการห้องพักวันพรุ่งนี้: เช็คอิน " + checkIns.length + " ห้อง, เช็คเอาท์ " + checkOuts.length + " ห้อง" + (stayOvers.length ? ", ต่อพัก " + stayOvers.length + " ห้อง" : "");
-  return fxBubble({ title: "🏨 รายการห้องพักวันพรุ่งนี้", sub: dateLabel, rows, blocks, altText: alt, footerNote: "ส่งอัตโนมัติโดยระบบโรงแรม", tone: "gold" });
+  return fxBubble({ title: "🏨 รายการห้องพักวันพรุ่งนี้", sub: dateLabel, rows, blocks, altText: alt, footerNote: "ส่งอัตโนมัติโดยระบบโรงแรม" });
 }
 
 // ── การ์ดเหตุการณ์ (ยกเลิก / Checkout / ย้ายห้อง / จองใหม่ ฯลฯ) ──
 // info = [[ป้าย, ค่า], ...] (ค่าว่างจะถูกข้าม)
-function buildEventFlex({ title, sub, tone, info, note, callout, altText, footerNote }) {
+function buildEventFlex({ title, sub, info, note, callout, altText, footerNote }) {
   const rows = (info || []).filter((p) => p && p[1] != null && String(p[1]).trim() !== "").map((p) => fxInfo(p[0], p[1]));
   const callouts = [];
   if (callout) callouts.push(fxCallout(callout.title, callout.body, callout.bg, callout.fg));
   if (note) callouts.push(fxCallout("📝 โน้ต", note, C.amberBg, C.amberTx));
-  return fxBubble({ title, sub, rows, callouts, altText: altText || title, footerNote, tone });
+  return fxBubble({ title, sub, rows, callouts, altText: altText || title, footerNote });
 }
 
 const stripEmoji = (s) => String(s == null ? "" : s).replace(/^[^\p{L}\p{N}]+/u, "").trim(); // ตัดอีโมจินำหน้า (guestsLine → "2 ท่าน")
 
-module.exports = { C, TONE, useCards, clip, fx, fxRow, fxInfo, fxCallout, fxSection, fxRoomItem, fxGroup, fxBubble, buildMaidPlanFlex, buildEventFlex, stripEmoji };
+module.exports = { C, useCards, clip, fx, fxRow, fxInfo, fxCallout, fxSection, fxRoomItem, fxGroup, fxBubble, buildMaidPlanFlex, buildEventFlex, stripEmoji };

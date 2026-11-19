@@ -1880,7 +1880,7 @@ app.post("/api/send-maid-note", adminAuth, async (req, res) => {
   lines.push(`📝 ${note}`);
   const msg = lines.join("\n");
   const out = FC.useCards()
-    ? FC.buildEventFlex({ title: "📝 โน้ตถึงแม่บ้าน", sub: room ? "ห้อง " + room : "แจ้งจากแอดมิน", tone: "amber",
+    ? FC.buildEventFlex({ title: "📝 โน้ตถึงแม่บ้าน", sub: room ? "ห้อง " + room : "แจ้งจากแอดมิน",
         info: [["ห้อง", room], ["แขก", guest]], callout: { title: "ข้อความ", body: note, bg: FC.C.amberBg, fg: FC.C.amberTx },
         altText: "โน้ตถึงแม่บ้าน" + (room ? " ห้อง " + room : "") + ": " + FC.clip(note, 200) })
     : { type: "text", text: msg };
@@ -1964,7 +1964,7 @@ app.post("/api/cancel-notify", adminAuth, async (req, res) => {
     `📅 ${checkin} → ${checkout}`,
   ].join("\n");
   const out = FC.useCards()
-    ? FC.buildEventFlex({ title: "🚫 ยกเลิกการจอง", sub: "ห้อง " + room, tone: "red",
+    ? FC.buildEventFlex({ title: "🚫 ยกเลิกการจอง", sub: "ห้อง " + room,
         info: [["ห้อง", room], ["แขก", guest], ["จำนวนแขก", gLine], ["เข้าพัก", `${checkin} → ${checkout}`]],
         altText: `ยกเลิกการจอง ห้อง ${room} (${guest}) ${checkin} → ${checkout}` })
     : { type: "text", text: msg };
@@ -2014,7 +2014,7 @@ app.post("/api/checkout-notify", adminAuth, async (req, res) => {
     `📅 ${checkin} → ${checkout}`,
   ].join("\n");
   const out = FC.useCards()
-    ? FC.buildEventFlex({ title: "🧳 Checkout แล้ว", sub: "ห้อง " + room, tone: "green",
+    ? FC.buildEventFlex({ title: "🧳 Checkout แล้ว", sub: "ห้อง " + room,
         info: [["ห้อง", room], ["แขก", guest], ["จำนวนแขก", gLine], ["เข้าพัก", `${checkin} → ${checkout}`]],
         altText: `Checkout แล้ว ห้อง ${room} (${guest})` })
     : { type: "text", text: msg };
@@ -2060,7 +2060,7 @@ app.post("/api/room-move-notify", adminAuth, async (req, res) => {
 
   const out = FC.useCards()
     ? FC.buildEventFlex({
-        title: splitBooking ? "📍 ย้ายห้องด่วน (เช็คอินแล้ว)" : "📍 แก้ไขห้องด่วน", sub: guest, tone: "amber",
+        title: splitBooking ? "📍 ย้ายห้องด่วน (เช็คอินแล้ว)" : "📍 แก้ไขห้องด่วน", sub: guest,
         info: splitBooking
           ? [["ResId", resId], ["แขก", guest], ["จำนวนแขก", guestsText], ["เช็คเอาท์", `ห้อง ${oldRoom} วันที่ ${effectiveDate}`], ["เช็คอิน", `ห้อง ${newRoom} วันเดียวกัน${segmentBResId ? ` (ResId ${segmentBResId})` : ""}`]]
           : [["ResId", resId], ["แขก", guest], ["จำนวนแขก", guestsText], ["ห้อง", `${oldRoom} → ${newRoom}`]],

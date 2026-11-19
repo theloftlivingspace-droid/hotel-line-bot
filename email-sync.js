@@ -425,7 +425,7 @@ async function sendNewBookingToAdmin(res, roomLabel, status = null, availableRoo
   const isAction = !roomLabel; // ต้องให้แอดมินตอบเลขห้อง → เน้นแถบสีเหลือง/แดง
   const out = FC.useCards()
     ? FC.buildEventFlex({
-        title: "🔔 จองใหม่!", sub: res.channel, tone: status === "conflict" ? "red" : (roomLabel ? "gold" : "amber"),
+        title: "🔔 จองใหม่!", sub: res.channel,
         info: [["แขก", res.guest], ["จำนวนแขก", guestsLine(res.guests)], ["ห้อง", roomLine], ["เข้าพัก", thaiDate(res.checkIn) + " → " + thaiDate(res.checkOut)], ["มัดจำ", res.isAirbnb ? "" : "เก็บมัดจำ 3,000 บาท"]],
         callout: isAction
           ? { title: hintLine, bg: status === "conflict" ? FC.C.redBg : FC.C.amberBg, fg: status === "conflict" ? FC.C.redTx : FC.C.amberTx }
@@ -458,7 +458,7 @@ async function sendUrgentToGroup(roomNumber, guest, checkIn, note, guests) {
     depositLine + "\n" + sep;
   const out = FC.useCards()
     ? FC.buildEventFlex({
-        title: "🚨 จองใหม่! " + dayLabel, sub: "ห้อง " + roomNumber, tone: "amber",
+        title: "🚨 จองใหม่! " + dayLabel, sub: "ห้อง " + roomNumber,
         info: [["ห้อง", roomNumber], ["แขก", guest], ["จำนวนแขก", guestsLine(guests)], ["เช็คอิน", thaiDate(checkIn)]],
         note: note || "", altText: "จองใหม่ " + dayLabel + " ห้อง " + roomNumber + " (" + guest + ")" })
     : msg;

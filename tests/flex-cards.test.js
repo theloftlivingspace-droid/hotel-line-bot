@@ -25,7 +25,7 @@ check(FC.buildMaidPlanFlex({ checkIns: Array.from({ length: 12 }, (_, i) => it("
 check(FC.buildMaidPlanFlex({ checkIns: [{ room: "113", name: undefined, meta: "", note: null }], checkOuts: [], dateLabel: undefined }));
 
 // การ์ดเหตุการณ์: ข้ามแถวที่ค่าว่าง
-const ev = FC.buildEventFlex({ title: "🚫 ยกเลิกการจอง", sub: "ห้อง 204", tone: "red", info: [["ห้อง", "204"], ["แขก", "Guest"], ["ResId", ""], ["เข้าพัก", "2026-11-20 → 2026-11-22"]], altText: "x" });
+const ev = FC.buildEventFlex({ title: "🚫 ยกเลิกการจอง", sub: "ห้อง 204", info: [["ห้อง", "204"], ["แขก", "Guest"], ["ResId", ""], ["เข้าพัก", "2026-11-20 → 2026-11-22"]], altText: "x" });
 check(ev);
 assert.strictEqual(ev.contents.body.contents.length, 3);
 check(FC.buildEventFlex({ title: "t", info: [], callout: { title: "c", bg: FC.C.amberBg, fg: FC.C.amberTx }, note: "โน้ต" }));
