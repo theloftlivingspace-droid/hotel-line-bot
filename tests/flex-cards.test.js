@@ -36,6 +36,18 @@ assert.strictEqual(rmItem.contents[0].contents[0].text, "204");
 assert.ok(JSON.stringify(rmItem.contents[1]).includes("Allure  ·  👤 1 ท่าน"));
 assert.strictEqual(FC.fxRoomItem({ room: "363 Mycondo", name: "G" }).contents[0].contents[0].text, "363");
 assert.strictEqual(FC.fxRoomItem({ room: "", name: "G" }).contents[0].contents[0].text, "-");
+// รายงานตรวจห้อง Checkout (ข้อมูลตัวอย่างจากรูปที่แม่บ้านส่ง)
+const rep = { uid: "203_20261119_1210", roomNum: "203 — Allure", guestName: "Albert Sukharevskiy", inspector: "Htwe", ota: "Airbnb",
+  roomStatus: "normal", ready: "พร้อม", lateCheckout: "ไม่มี", elecUnit: 0, elecTotal: 0, chargeAmount: 0, chargeNote: "",
+  issues: ["ไม่มีขยะตกค้าง"], damages: [], repairs: [], extraNote: "",
+  driveLinks: [{ label: "Room 1", url: "https://drive.google.com/file/d/AAA/view" }, { label: "Room 2", url: "https://drive.google.com/file/d/BBB/view" }],
+  checkDate: "2026-11-19", checkTime: "12:10" };
+let cr = FC.buildCheckoutReportFlex(rep); check(cr);
+assert.strictEqual(cr.contents.footer.contents.filter((x) => x.type === "button").length, 2);
+assert.ok(cr.altText.includes("203") && cr.altText.includes("ปกติ"));
+cr = FC.buildCheckoutReportFlex(Object.assign({}, rep, { roomStatus: "major", elecUnit: 12.5, elecTotal: 100, chargeAmount: 1500, chargeNote: "จานแตก", damages: ["ทีวีร้าว"], repairs: ["เปลี่ยนทีวี"], extraNote: "ติดต่อแขกแล้ว", driveLinks: [], lateCheckout: "14:00" }));
+check(cr); assert.strictEqual(cr.contents.footer.contents.filter((x) => x.type === "button").length, 0);
+check(FC.buildCheckoutReportFlex(Object.assign({}, rep, { roomStatus: "ไม่รู้จัก", guestName: "", issues: [], driveLinks: [] })));
 
 // ปุ่มแดชบอร์ดเฉพาะ https
 assert.ok(FC.fxBubble({ title: "t", sub: "s", rows: [FC.fx("a")], dashboardUrl: "https://x.co" }).contents.footer);

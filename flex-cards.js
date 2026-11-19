@@ -53,7 +53,7 @@ function fxRoomItem({ room, name, meta, note }) {
 }
 const fxGroup = (heading, items) => ({ type: "box", layout: "vertical", spacing: "sm", contents: [fxSection(heading), ...items.map(fxRoomItem)] });
 
-function fxBubble({ title, sub, rows, blocks, callouts, altText, dashboardUrl, footerNote }) {
+function fxBubble({ title, sub, rows, blocks, callouts, altText, dashboardUrl, footerNote, buttons }) {
   const header = [fx(title, { color: C.gold, weight: "bold", size: "md" }), fx(sub, { color: C.sub, size: "xs" })];
   const body = [...(rows || []), ...(blocks || []), ...(callouts || [])];
   const bubble = {
@@ -63,6 +63,7 @@ function fxBubble({ title, sub, rows, blocks, callouts, altText, dashboardUrl, f
   };
   const footer = [];
   if (dashboardUrl && /^https:\/\//.test(dashboardUrl)) footer.push({ type: "button", style: "primary", color: C.gold, height: "sm", action: { type: "uri", label: "เปิดแดชบอร์ด", uri: dashboardUrl } });
+  (buttons || []).forEach((b) => footer.push({ type: "button", style: "secondary", color: "#F1E7C9", height: "sm", action: { type: "uri", label: clip(b.label, 40), uri: b.url } }));
   if (footerNote) footer.push(fx(footerNote, { size: "xxs", color: C.mute, align: "center" }));
   if (footer.length) bubble.footer = { type: "box", layout: "vertical", paddingAll: "12px", spacing: "sm", contents: footer };
   return { type: "flex", altText: clip(altText || title, 380), contents: bubble };
@@ -92,6 +93,34 @@ function buildEventFlex({ title, sub, info, note, callout, altText, footerNote }
   return fxBubble({ title, sub, rows, callouts, altText: altText || title, footerNote });
 }
 
+// ── รายงานตรวจห้องหลัง Checkout (จากฟอร์ม checkout-checklist) ──
+const STATUS = {
+  normal: ["✅ ปกติ", "green"], clean: ["🧹 Clean เพิ่ม", "amber"], minor: ["⚠️ เสียหายเล็กน้อย", "amber"],
+  major: ["🔴 เสียหายหนัก", "red"], block: ["🚫 Block ห้อง", "red"],
+};
+const TONES = { green: [C.greenBg, C.greenTx], amber: [C.amberBg, C.amberTx], red: [C.redBg, C.redTx] };
+const bullets = (arr) => arr.map((x) => "• " + x).join("\n");
+function buildCheckoutReportFlex(d) {
+  const [stLabel, stTone] = STATUS[d.roomStatus] || [d.roomStatus || "-", "amber"];
+  const [bg, fg] = TONES[stTone];
+  const callouts = [];
+  if (d.issues.length) callouts.push(fxCallout("⚠️ รายการผิดปกติ", bullets(d.issues), C.amberBg, C.amberTx));
+  if (d.damages.length) callouts.push(fxCallout("🔴 Damage", bullets(d.damages), C.redBg, C.redTx));
+  if (d.repairs.length) callouts.push(fxCallout("🔧 งานซ่อม", bullets(d.repairs), C.amberBg, C.amberTx));
+  if (d.extraNote) callouts.push(fxCallout("📝 หมายเหตุ", d.extraNote, C.amberBg, C.amberTx));
+  const info = [["ห้อง", d.roomNum], ["แขก", d.guestName], ["ผู้ตรวจ", d.inspector], ["OTA", d.ota], ["พร้อมขาย", d.ready],
+    ["Late CO", d.lateCheckout && d.lateCheckout !== "ไม่มี" ? d.lateCheckout : ""],
+    ["ค่าไฟ", d.elecTotal > 0 ? d.elecUnit.toFixed(1) + " unit = " + d.elecTotal.toLocaleString("en-US") + "฿" : ""],
+    ["Charge", d.chargeAmount ? d.chargeAmount.toLocaleString("en-US") + "฿" + (d.chargeNote ? " — " + d.chargeNote : "") : ""]]
+    .filter((p) => p[1] != null && String(p[1]).trim() !== "");
+  const rows = [fxCallout(stLabel, null, bg, fg), ...info.map((p) => fxInfo(p[0], p[1]))];
+  const buttons = d.driveLinks.slice(0, 8).map((l) => ({ label: "📸 " + l.label, url: l.url }));
+  return fxBubble({
+    title: "🏨 รายงานตรวจห้อง Checkout", sub: d.checkDate + " " + d.checkTime, rows, callouts, buttons,
+    footerNote: d.uid, altText: "รายงานตรวจห้อง Checkout ห้อง " + d.roomNum + " — " + stLabel + (d.guestName ? " (" + d.guestName + ")" : ""),
+  });
+}
+
 const stripEmoji = (s) => String(s == null ? "" : s).replace(/^[^\p{L}\p{N}]+/u, "").trim(); // ตัดอีโมจินำหน้า (guestsLine → "2 ท่าน")
 
-module.exports = { C, useCards, clip, fx, fxRow, fxInfo, fxCallout, fxSection, fxRoomItem, fxGroup, fxBubble, buildMaidPlanFlex, buildEventFlex, stripEmoji };
+module.exports = { C, useCards, clip, fx, fxRow, fxInfo, fxCallout, fxSection, fxRoomItem, fxGroup, fxBubble, buildMaidPlanFlex, buildEventFlex, buildCheckoutReportFlex, stripEmoji };

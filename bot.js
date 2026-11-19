@@ -1615,6 +1615,52 @@ app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json({ limit: "20mb" }));
 app.get("/health", (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
+// ── รายงานตรวจห้อง Checkout จากฟอร์มแม่บ้าน (loft-pricing/checkout-checklist.html) → การ์ดเข้ากลุ่ม ──
+// ใช้คีย์เฉพาะกิจ CHECKOUT_REPORT_KEY (ไม่ใช่ ADMIN_TOKEN) เพราะคีย์นี้ฝังในหน้าฟอร์มสาธารณะ — ใช้ได้แค่ส่งการ์ดนี้เข้ากลุ่มแม่บ้าน
+const _crTimes = [];
+const _cap = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+const _capList = (v) => (Array.isArray(v) ? v : []).slice(0, 30).map((x) => _cap(x, 200)).filter(Boolean);
+function sanitizeCheckoutReport(b) {
+  const links = (Array.isArray(b.driveLinks) ? b.driveLinks : []).slice(0, 12)
+    .map((l) => ({ label: _cap(l && l.label, 30) || "รูป", url: _cap(l && l.url, 900) }))
+    .filter((l) => /^https:\/\/(drive|docs)\.google\.com\//.test(l.url));
+  return {
+    uid: _cap(b.uid, 60), roomNum: _cap(b.roomNum, 60), guestName: _cap(b.guestName, 80), inspector: _cap(b.inspector, 60),
+    ota: _cap(b.ota, 40), roomStatus: _cap(b.roomStatus, 20), ready: _cap(b.ready, 40), lateCheckout: _cap(b.lateCheckout, 60),
+    elecUnit: Number(b.elecUnit) || 0, elecTotal: Number(b.elecTotal) || 0, chargeAmount: Number(b.chargeAmount) || 0,
+    chargeNote: _cap(b.chargeNote, 200), issues: _capList(b.issues), damages: _capList(b.damages), repairs: _capList(b.repairs),
+    extraNote: _cap(b.extraNote, 500), driveLinks: links, checkDate: _cap(b.checkDate, 20), checkTime: _cap(b.checkTime, 10),
+  };
+}
+function checkoutReportCors(req, res, next) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-checkout-key");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+}
+app.options("/api/checkout-report", checkoutReportCors);
+app.post("/api/checkout-report", checkoutReportCors, async (req, res) => {
+  const want = process.env.CHECKOUT_REPORT_KEY || "";
+  const got = String(req.headers["x-checkout-key"] || "");
+  const a = Buffer.from(got), b = Buffer.from(want);
+  if (!want || a.length !== b.length || !require("crypto").timingSafeEqual(a, b)) return res.status(401).json({ ok: false, error: "Unauthorized" });
+  if (!FC.useCards()) return res.status(503).json({ ok: false, error: "cards disabled" }); // ฟอร์มจะถอยไปใช้ข้อความธรรมดาเอง
+  const now = Date.now();
+  while (_crTimes.length && now - _crTimes[0] > 60000) _crTimes.shift();
+  if (_crTimes.length >= 20) return res.status(429).json({ ok: false, error: "too many requests" });
+  _crTimes.push(now);
+  const d = sanitizeCheckoutReport(req.body || {});
+  if (!d.roomNum || !d.uid) return res.status(400).json({ ok: false, error: "roomNum and uid required" });
+  try {
+    await linePush(LINE_GROUP, [FC.buildCheckoutReportFlex(d)]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("checkout-report push error:", e);
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
 // ── Trigger email sync ทันที ──────────────────────────────────────────────
 app.post("/api/sync-email", adminAuth, async (req, res) => {
   res.json({ ok: true, message: "sync started" });
