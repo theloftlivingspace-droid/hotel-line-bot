@@ -110,7 +110,10 @@ function buildEveningSummary({ date, expectedRooms, logs }) {
   const followUps = today
     .map((l) => ({ room: l.room, reasons: followUpReasons(l), note: l.extraNote }))
     .filter((f) => f.reasons.length);
-  return { date, expected: expected.length, inspected: today.length, ready: ready.map((l) => l.room), notReady, missing, followUps };
+  const notes = today
+    .map((l) => ({ room: l.room, text: [l.extraNote, ...l.damages.filter((d) => !/late\s*checkout/i.test(d)), ...l.repairs.map((x) => "ซ่อม: " + x)].filter(Boolean).join(" | ") }))
+    .filter((n) => n.text);
+  return { date, expected: expected.length, inspected: today.length, ready: ready.map((l) => l.room), notReady, missing, followUps, notes };
 }
 
 // ส่งเมื่อ: มีห้องไม่พร้อม / ยังไม่มีรายงาน / มีเรื่องต้องตาม  — ไม่ส่งเมื่อทุกอย่างเรียบร้อยหรือวันนั้นไม่มีอะไรเลย
@@ -131,7 +134,8 @@ function buildEveningMessage(s, dateLabel) {
     m += "\n📌 ต้องตามต่อ\n";
     for (const f of s.followUps) {
       m += "• ห้อง " + f.room + " — " + f.reasons.join(" / ") + "\n";
-      if (f.note) m += "   📝 " + clip(f.note.replace(/\s+/g, " "), 80) + "\n";
+      if (f.ai) m += "   🤖 " + f.ai + "\n";
+      else if (f.note) m += "   📝 " + clip(f.note.replace(/\s+/g, " "), 80) + "\n";
     }
   }
   return m + SEP + "\n💌 ส่งอัตโนมัติโดยระบบ";
@@ -149,12 +153,15 @@ function buildMorningPlan({ today, yesterdayLogs }) {
   return { checkIns: today.checkIns.length, checkOuts: today.checkOuts.length, stayOvers: (today.stayOvers || []).length, turnover, carry };
 }
 function shouldSendMorning(p) { return p.checkIns + p.checkOuts + p.stayOvers > 0 || p.carry.length > 0; }
-function buildMorningMessage(p, dateLabel) {
+function buildMorningMessage(p, dateLabel, opts) {
+  const o = opts || {}, group = o.audience === "group";
   let m = "🌅 แผนวันนี้\n📅 " + dateLabel + "\n" + SEP + "\n";
   m += "🚪 เช็คเอาท์ " + p.checkOuts + " ห้อง\n✅ เช็คอิน " + p.checkIns + " ห้อง\n";
   if (p.stayOvers) m += "🔁 ต่อพัก " + p.stayOvers + " ห้อง\n";
   if (p.turnover.length) m += "\n⏱ ทำก่อน (เช็คเอาท์แล้วมีแขกใหม่เข้าวันเดียวกัน): ห้อง " + p.turnover.join(", ") + "\n";
-  if (p.carry.length) {
+  if (!group && o.prices) m += "\n💰 ราคาเป้าหมายคืนนี้: " + formatPrices(o.prices) + "\n";
+  if (!group && o.priceWarning) m += "\n⚠️ " + o.priceWarning + "\n";
+  if (!group && p.carry.length) {
     m += "\n📌 ค้างจากเมื่อวาน\n";
     for (const c of p.carry) m += "• ห้อง " + c.room + " — " + c.reasons.join(" / ") + "\n";
   }
@@ -171,7 +178,7 @@ function buildEveningFlex(s, dateLabel, opts) {
   if (s.notReady.length) callouts.push(fxCallout("⚠️ ไม่พร้อม", s.notReady.map((x) => "ห้อง " + x.room + " (" + x.reason + ")").join(", "), C.amberBg, C.amberTx));
   if (s.missing.length) callouts.push(fxCallout("❓ ยังไม่มีรายงานตรวจห้อง", "ห้อง " + s.missing.join(", "), C.amberBg, C.amberTx));
   for (const f of s.followUps.slice(0, 5)) {
-    const note = f.note ? "\n📝 " + clip(f.note.replace(/\s+/g, " "), 120) : "";
+    const note = f.ai ? "\n🤖 " + f.ai : f.note ? "\n📝 " + clip(f.note.replace(/\s+/g, " "), 120) : "";
     callouts.push(fxCallout("📌 ห้อง " + f.room + " — ต้องตามต่อ", f.reasons.join(" / ") + note, C.redBg, C.redTx));
   }
   if (s.followUps.length > 5) callouts.push(fx("และอีก " + (s.followUps.length - 5) + " ห้อง ดูรายละเอียดในแดชบอร์ด", { size: "xs" }));
@@ -180,28 +187,37 @@ function buildEveningFlex(s, dateLabel, opts) {
 }
 
 function buildMorningFlex(p, dateLabel, opts) {
+  const o = opts || {}, group = o.audience === "group";
   const rows = [fxRow("เช็คเอาท์วันนี้", p.checkOuts + " ห้อง"), fxRow("เช็คอินวันนี้", p.checkIns + " ห้อง")];
   if (p.stayOvers) rows.push(fxRow("ต่อพัก", p.stayOvers + " ห้อง"));
   const callouts = [];
   if (p.turnover.length) callouts.push(fxCallout("⏱ ทำก่อน", "ห้อง " + p.turnover.join(", ") + " เช็คเอาท์แล้วมีแขกใหม่เข้าวันเดียวกัน", C.amberBg, C.amberTx));
-  if (p.carry.length) callouts.push(fxCallout("📌 ค้างจากเมื่อวาน", p.carry.map((c) => "ห้อง " + c.room + " — " + c.reasons.join(" / ")).join("\n"), C.redBg, C.redTx));
+  if (!group && o.prices) callouts.push(fxCallout("💰 ราคาเป้าหมายคืนนี้", formatPrices(o.prices), "#EAF0FA", C.navy));
+  if (!group && o.priceWarning) callouts.push(fxCallout("⚠️ ระบบตั้งราคา", o.priceWarning, C.redBg, C.redTx));
+  if (!group && p.carry.length) callouts.push(fxCallout("📌 ค้างจากเมื่อวาน", p.carry.map((c) => "ห้อง " + c.room + " — " + c.reasons.join(" / ")).join("\n"), C.redBg, C.redTx));
   const alt = "แผนวันนี้: เช็คเอาท์ " + p.checkOuts + " ห้อง, เช็คอิน " + p.checkIns + " ห้อง" + (p.turnover.length ? ", ทำก่อน ห้อง " + p.turnover.join(", ") : "");
-  return fxBubble({ title: "แผนวันนี้", sub: dateLabel, rows, callouts, altText: alt, dashboardUrl: opts && opts.dashboardUrl });
+  // ข้อความถึงกลุ่มแม่บ้านไม่มีปุ่มแดชบอร์ด
+  return fxBubble({ title: "แผนวันนี้", sub: dateLabel, rows, callouts, altText: alt, dashboardUrl: group ? "" : o.dashboardUrl });
 }
 
 
 // ─── การตั้งค่า (ตั้งจากแดชบอร์ด) + ตัวช่วยกำหนดเวลา/ประวัติ ───
 const DEFAULT_SETTINGS = {
-  morning: { enabled: true, time: "07:30" },
-  evening: { enabled: true, time: "18:30", onlyWhenFlagged: true },
+  morning: { enabled: true, time: "07:30", recipients: "admin", includePrices: false },
+  evening: { enabled: true, time: "18:30", onlyWhenFlagged: true, aiSummary: false },
 };
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const RECIPIENTS = ["admin", "group", "both"];
 function normalizeSettings(raw) {
   const r = raw && typeof raw === "object" ? raw : {};
   const pick = (k, def) => {
     const v = r[k] && typeof r[k] === "object" ? r[k] : {};
-    const out = { enabled: typeof v.enabled === "boolean" ? v.enabled : def.enabled, time: TIME_RE.test(String(v.time || "")) ? String(v.time) : def.time };
-    if ("onlyWhenFlagged" in def) out.onlyWhenFlagged = typeof v.onlyWhenFlagged === "boolean" ? v.onlyWhenFlagged : def.onlyWhenFlagged;
+    const out = {};
+    for (const key of Object.keys(def)) {
+      if (key === "time") out.time = TIME_RE.test(String(v.time || "")) ? String(v.time) : def.time;
+      else if (key === "recipients") out.recipients = RECIPIENTS.includes(v.recipients) ? v.recipients : def.recipients;
+      else out[key] = typeof v[key] === "boolean" ? v[key] : def[key];
+    }
     return out;
   };
   return { morning: pick("morning", DEFAULT_SETTINGS.morning), evening: pick("evening", DEFAULT_SETTINGS.evening) };
@@ -221,10 +237,87 @@ function historyEntry({ kind, date, decision, reason, summary, text, at }) {
   return { at: at || new Date().toISOString(), kind, date, decision, reason: reason || "", summary: summary || null, text: text ? String(text).slice(0, 1500) : "" };
 }
 
+
+// ─── ราคาเป้าหมายคืนนี้ (อ่านจากชีต Target_Rates ของ lh-rate-automation: Date | RoomType | Rate | Occ% | DaysAhead | UpdatedAt) ───
+const ROOM_TYPE_ORDER = ["Luxury", "Retro", "Allure", "Elegance", "Legacy", "Radiance"];
+// ชีตอาจแปลงคอลัมน์ Date เป็นวันที่ตามภาษา/ locale → รองรับ ISO, y/m/d และ d/m/y หรือ m/d/y (ตั้ง dateOrder = "dmy" | "mdy")
+function toIsoDate(raw, dateOrder) {
+  const t = String(raw || "").trim();
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/) || t.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+  if (m) return m[1] + "-" + m[2].padStart(2, "0") + "-" + m[3].padStart(2, "0");
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) return "";
+  const [d, mo] = dateOrder === "mdy" ? [m[2], m[1]] : [m[1], m[2]];
+  return m[3] + "-" + mo.padStart(2, "0") + "-" + d.padStart(2, "0");
+}
+// อ่านแถวของวันที่ระบุจากตาราง Target_Rates (rows = array ของแถว รวมหัวตาราง)
+// คืน { rates, updatedAt, ageHours, stale } — rates = null เมื่อไม่พบข้อมูลของวันนั้น/โครงสร้างผิด (ไม่เดา)
+// stale = true เมื่อ UpdatedAt ใหม่สุดของแถววันนั้นเก่ากว่า maxAgeHours (ระบบตั้งราคาอาจหยุดทำงาน → ไม่ควรเอาราคาเก่ามาเรียกว่า "คืนนี้")
+function readTargetRates(rows, date, dateOrder, opts) {
+  const o = opts || {}, maxAge = o.maxAgeHours == null ? 36 : o.maxAgeHours;
+  const none = { rates: null, updatedAt: "", ageHours: null, stale: false };
+  if (!Array.isArray(rows) || rows.length < 2) return none;
+  const h = rows[0].map((x) => String(x == null ? "" : x).trim());
+  const iD = h.indexOf("Date"), iT = h.indexOf("RoomType"), iR = h.indexOf("Rate"), iU = h.indexOf("UpdatedAt");
+  if (iD < 0 || iT < 0 || iR < 0) return none;
+  const rates = {};
+  let newest = 0;
+  for (const r of rows.slice(1)) {
+    if (toIsoDate(r[iD], dateOrder) !== date) continue;
+    const rate = Number(String(r[iR] == null ? "" : r[iR]).replace(/[^\d.]/g, ""));
+    if (r[iT] && rate > 0) {
+      rates[String(r[iT]).trim()] = Math.round(rate);
+      const t = iU >= 0 ? Date.parse(String(r[iU] || "")) : NaN;
+      if (t > newest) newest = t;
+    }
+  }
+  if (!Object.keys(rates).length) return none;
+  if (!newest) return { rates, updatedAt: "", ageHours: null, stale: false };    // ไม่มี UpdatedAt ให้ตรวจ — ใช้ได้แต่ตรวจความสดไม่ได้
+  const ageHours = ((o.nowMs == null ? Date.now() : o.nowMs) - newest) / 3600000;
+  return { rates, updatedAt: new Date(newest).toISOString(), ageHours, stale: ageHours > maxAge };
+}
+// เวอร์ชัน CSV (คงไว้สำหรับเทสต์/การใช้เดิม): คืนเฉพาะแผนที่ราคา หรือ null
+function parseTargetRates(csvText, date, dateOrder) {
+  return readTargetRates(parseCsv(csvText), date, dateOrder, { maxAgeHours: Infinity }).rates;
+}
+function formatPrices(map) {
+  const keys = ROOM_TYPE_ORDER.filter((k) => k in map).concat(Object.keys(map).filter((k) => !ROOM_TYPE_ORDER.includes(k)));
+  return keys.map((k) => k + " ฿" + Number(map[k]).toLocaleString("en-US")).join(" · ");
+}
+
+// ─── AI สรุปหมายเหตุตรวจห้อง (บอทเรียก Claude; ฟังก์ชันตรวจผลลัพธ์เป็นแบบล้วน ไม่เชื่อผลที่ไม่ตรงสเปก) ───
+// raw = ข้อความที่ AI ตอบ ; allowedRooms = ห้องที่ส่งให้ AI  → { "214": { summary, needsAttention } }
+function validateAiNotes(raw, allowedRooms) {
+  let t = String(raw || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  let arr;
+  try { arr = JSON.parse(t); } catch (_) { return {}; }
+  if (!Array.isArray(arr)) return {};
+  const ok = new Set(allowedRooms), out = {};
+  for (const it of arr) {
+    if (!it || typeof it !== "object") continue;
+    const room = String(it.room || "").trim();
+    const summary = typeof it.summary === "string" ? it.summary.replace(/\s+/g, " ").trim().slice(0, 120) : "";
+    if (!ok.has(room) || !summary || out[room]) continue;
+    out[room] = { summary, needsAttention: it.needsAttention === true };
+  }
+  return out;
+}
+// เติมสรุปของ AI ลงในเรื่องต้องตามต่อ + เพิ่มห้องที่ AI เห็นว่าต้องใส่ใจ (เช่น "แก้วแตก" ที่ไม่ได้ติ๊กช่องความเสียหาย)
+function applyAiNotes(s, aiMap) {
+  if (!aiMap || !Object.keys(aiMap).length) return s;
+  const followUps = s.followUps.map((f) => (aiMap[f.room] ? Object.assign({}, f, { ai: aiMap[f.room].summary }) : f));
+  const have = new Set(followUps.map((f) => f.room));
+  for (const room of Object.keys(aiMap)) {
+    if (aiMap[room].needsAttention && !have.has(room)) followUps.push({ room, reasons: ["จากหมายเหตุ (AI)"], note: "", ai: aiMap[room].summary, fromAi: true });
+  }
+  return Object.assign({}, s, { followUps });
+}
+
 module.exports = {
   parseCsv, parseCheckoutLog, dedupeLatest, isReadyForGuests, followUpReasons,
   buildEveningSummary, shouldSendEvening, buildEveningMessage,
   buildMorningPlan, shouldSendMorning, buildMorningMessage, roomNum,
   buildEveningFlex, buildMorningFlex,
   DEFAULT_SETTINGS, normalizeSettings, isDue, shouldSendEveningWith, historyEntry,
+  toIsoDate, parseTargetRates, readTargetRates, formatPrices, validateAiNotes, applyAiNotes,
 };
