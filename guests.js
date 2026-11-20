@@ -115,8 +115,19 @@ function extractGuestEntry(email) {
   if (sender === "automated@airbnb.com") {
     const sm = subject.match(/Reservation confirmed\s*[-–]\s*(.+?)\s+arrives\s+([A-Za-z]+)\s+(\d{1,2})/i);
     const counts = parseAirbnbGuests(text);
-    if (!sm || !monthNum(sm[2]) || !counts) return null;
-    return mk(sm[1], mmdd(monthNum(sm[2]), sm[3]), counts, "airbnb");
+    if (sm && monthNum(sm[2]) && counts) return mk(sm[1], mmdd(monthNum(sm[2]), sm[3]), counts, "airbnb");
+
+    // เทมเพลตที่สอง: จองให้คนอื่น (ผู้จอง ≠ ผู้เข้าพัก) หัวอีเมลเป็น
+    // "Confirmed: Craig’s November 20 – 23 reservation" มีแค่ชื่อต้น ไม่มี "arrives"
+    // ชื่อเต็มของผู้เข้าพักอยู่ใต้หัวข้อ "ABOUT THE GUEST" ในเนื้อหา (เจอจริง 2026-11-20,
+    // HMBMXBXPA8 จอง Sam → ผู้พัก Craig Weston ทำให้การ์ด LINE ขึ้น "ไม่ระบุ")
+    const sm2 = subject.match(/^\s*Confirmed:\s*.+?[’']s\s+([A-Za-z]+)\s+(\d{1,2})\s*[–-]/i);
+    if (sm2 && monthNum(sm2[1]) && counts) {
+      const gm = text.match(/ABOUT THE GUEST\s+(?:\[?https?:\/\/\S+\]?\s+)?([^\n\[\]]+?)\s*(?:\n|\[|Identity verified|On Airbnb|Send a message|$)/);
+      const fullName = gm ? gm[1].trim() : "";
+      if (fullName && nameTokens(fullName).length >= 2) return mk(fullName, mmdd(monthNum(sm2[1]), sm2[2]), counts, "airbnb-booked-for");
+    }
+    return null;
   }
 
   // Trip.com: "Guest Name: Saphanthong/Chinchutha" + "Staying period:Oct 10, 2026 - ..."
