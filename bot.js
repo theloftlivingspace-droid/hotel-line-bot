@@ -1618,6 +1618,7 @@ app.get("/health", (req, res) => res.json({ ok: true, ts: new Date().toISOString
 // ── รายงานตรวจห้อง Checkout จากฟอร์มแม่บ้าน (loft-pricing/checkout-checklist.html) → การ์ดเข้ากลุ่ม ──
 // ใช้คีย์เฉพาะกิจ CHECKOUT_REPORT_KEY (ไม่ใช่ ADMIN_TOKEN) เพราะคีย์นี้ฝังในหน้าฟอร์มสาธารณะ — ใช้ได้แค่ส่งการ์ดนี้เข้ากลุ่มแม่บ้าน
 const _crTimes = [];
+const _crDedupe = require("./recent-dedupe").makeDeduper(10 * 60 * 1000); // ข้อมูลเหมือนเดิมเป๊ะภายใน 10 นาที = กดซ้ำ ไม่ส่งการ์ดซ้ำ
 const _cap = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
 const _capList = (v) => (Array.isArray(v) ? v : []).slice(0, 30).map((x) => _cap(x, 200)).filter(Boolean);
 function sanitizeCheckoutReport(b) {
@@ -1652,10 +1653,14 @@ app.post("/api/checkout-report", checkoutReportCors, async (req, res) => {
   _crTimes.push(now);
   const d = sanitizeCheckoutReport(req.body || {});
   if (!d.roomNum || !d.uid) return res.status(400).json({ ok: false, error: "roomNum and uid required" });
+  const dupKey = require("crypto").createHash("sha1").update(JSON.stringify(d)).digest("hex");
+  if (_crDedupe.seen(dupKey)) { console.log("checkout-report: ซ้ำ ข้าม uid=" + d.uid); return res.json({ ok: true, duplicate: true }); }
+  _crDedupe.mark(dupKey);
   try {
     await linePush(LINE_GROUP, [FC.buildCheckoutReportFlex(d)]);
     res.json({ ok: true });
   } catch (e) {
+    _crDedupe.clear(dupKey); // ส่งไม่สำเร็จ → ให้ลองใหม่ได้
     console.error("checkout-report push error:", e);
     res.status(500).json({ ok: false, error: String(e) });
   }

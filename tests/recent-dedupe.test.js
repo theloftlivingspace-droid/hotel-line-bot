@@ -1,0 +1,13 @@
+const assert = require("assert");
+const { makeDeduper } = require("../recent-dedupe.js");
+const d = makeDeduper(1000, 3);
+assert.strictEqual(d.seen("a", 0), false);
+d.mark("a", 0);
+assert.strictEqual(d.seen("a", 500), true, "ภายใน TTL ต้องซ้ำ");
+assert.strictEqual(d.seen("a", 1500), false, "เกิน TTL ส่งใหม่ได้");
+d.mark("b", 2000); d.clear("b");
+assert.strictEqual(d.seen("b", 2001), false, "clear แล้วลองใหม่ได้");
+["x", "y", "z", "w"].forEach((k, i) => d.mark(k, 3000 + i));
+assert.strictEqual(d.seen("x", 3004), false, "เกิน max ตัดตัวเก่าสุด");
+assert.strictEqual(d.seen("w", 3004), true);
+console.log("recent-dedupe tests OK");
