@@ -82,4 +82,19 @@ assert.strictEqual(g.guestsLine(null), "\u2753 ไม่ระบุ");
   const plan = g.planGuestFills(rows, [{ resId: "ABB-X-20261103", guests: { adults: 1, children: 0 } }], idx, "2026-10-17");
   assert.deepStrictEqual(plan, [{ row: 2, g: { adults: 2, children: 1 } }, { row: 3, g: { adults: 1, children: 0 } }]);
 }
+
+// Airbnb จองให้คนอื่น (เทมเพลต "Confirmed: {ชื่อต้น}’s ... reservation") — ชื่อเต็มอยู่ใต้ ABOUT THE GUEST
+{
+  const body = "NEW BOOKING CONFIRMED! CRAIG ARRIVES NOV 20.\n\nTHIS TRIP WAS BOOKED BY:\n\n   Sam\n\n   On Airbnb since 2021\n\nABOUT THE GUEST\n\nhttps://www.airbnb.com/hosting/reservations/details/HMBMXBXPA8?isPending=true&euid=22aeb570 Craig Weston\n\n   [https://www.airbnb.com/hosting/reservations/details/HMBMXBXPA8?isPending=true]\n\n   Identity verified · 3 reviews\n\nCheck-in Checkout\n\nFri, Nov 20 Mon, Nov 23\n\nGUESTS\n\n1 adult\n\nMORE DETAILS ABOUT WHO’S COMING\n\nCONFIRMATION CODE\nHMBMXBXPA8";
+  const bookedFor = mkEmail("automated@airbnb.com", "Confirmed: Craig’s November 20 – 23 reservation", body);
+  const i2 = g.buildGuestIndex([bookedFor]);
+  assert.deepStrictEqual(g.lookupGuests(i2, { guest: "Craig Weston", checkIn: "2026-11-20" }), { adults: 1, children: 0 });
+  assert.strictEqual(g.lookupGuests(i2, { guest: "Craig Weston", checkIn: "2026-11-21" }), null); // คนละวัน
+  // ไม่มีชื่อเต็มใต้ ABOUT THE GUEST → ไม่เดา
+  const noName = mkEmail("automated@airbnb.com", "Confirmed: Craig’s November 20 – 23 reservation", "GUESTS\n\n1 adult\n\nMORE DETAILS ABOUT WHO’S COMING");
+  assert.strictEqual(g.extractGuestEntry(noName), null);
+  // เหมือนข้อความแบน (html → text) ไม่มีขึ้นบรรทัดใหม่
+  const flat = mkEmail("automated@airbnb.com", "Confirmed: Craig’s November 20 – 23 reservation", "ABOUT THE GUEST Craig Weston Identity verified · 3 reviews GUESTS 1 adult MORE DETAILS ABOUT WHO’S COMING");
+  assert.deepStrictEqual(g.extractGuestEntry(flat).counts, { adults: 1, children: 0 });
+}
 console.log("ALL OK");
