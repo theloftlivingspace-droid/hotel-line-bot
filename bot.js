@@ -592,6 +592,8 @@ async function buildDailySummary(kind, settings) {
 const AN = require("./anomalies");
 const ANOMALY_ALERTS_ENABLED = process.env.ANOMALY_ALERTS_ENABLED === "true";
 const ANOMALY_REPORT_AFTER_HOUR = Number(process.env.ANOMALY_REPORT_AFTER_HOUR) || 15;
+// ที่จำสำรองในหน่วยความจำ: ถ้า Redis ล่ม/ไม่ได้ตั้งค่า ระบบจะได้ไม่ส่งเรื่องเดิมซ้ำทุกชั่วโมง (รีสตาร์ตบอทแล้วหาย ซึ่งสูงสุดแจ้งซ้ำอีกครั้ง)
+const _anomalyMem = { date: "", ids: new Set() };
 async function runAnomalyCheck({ dryRun = true } = {}) {
   const today = bangkokDate(0);
   const hour = Number(new Date().toLocaleString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", hour12: false })) % 24;
@@ -599,11 +601,13 @@ async function runAnomalyCheck({ dryRun = true } = {}) {
   const logs = DS.dedupeLatest(DS.parseCheckoutLog(await fetchCheckoutLogCsv()).filter((l) => l.date === today && l.room !== "363"));
   const all = AN.detect({ rows, logs, today, tomorrow: bangkokDate(1), hour, normalizeDate, reportAfterHour: ANOMALY_REPORT_AFTER_HOUR });
   const key = "anomaly_sent_" + today;
-  const fresh = AN.filterNew(all, (await redisGet(key)) || []);
+  if (_anomalyMem.date !== today) { _anomalyMem.date = today; _anomalyMem.ids = new Set(); }
+  const fresh = AN.filterNew(all, ((await redisGet(key)) || []).concat(Array.from(_anomalyMem.ids)));
   const base = { date: today, hour, total: all.length, fresh: fresh.length, items: fresh };
   if (dryRun || !fresh.length) return Object.assign(base, { sent: false });
   if (!ADMIN_USER) throw new Error("ไม่ได้ตั้ง ADMIN_USER_ID");
   await linePush(ADMIN_USER, [{ type: "text", text: AN.buildAlertText(fresh, formatThaiDate(today)) }]);
+  fresh.forEach((i) => _anomalyMem.ids.add(i.id));
   await redisSet(key, ((await redisGet(key)) || []).concat(fresh.map((i) => i.id)));
   return Object.assign(base, { sent: true });
 }
