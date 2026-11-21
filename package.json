@@ -8,6 +8,7 @@
     "test":  "node bot.js --test",
     "sync":  "node email-sync.js --sync",
     "test:cards": "node tests/flex-cards.test.js",
+    "test:anomalies": "node tests/anomalies.test.js",
     "test:guests": "node tests/guests.test.js",
     "test:moveout": "node tests/moveout.test.js",
     "test:rent-termination": "node tests/rent-termination.test.js"
