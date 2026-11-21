@@ -564,7 +564,21 @@ async function buildDailySummary(kind, settings) {
     }
     return { kind, date: today, send: DS.shouldSendEveningWith(s, cfg.evening), summary: s, warnings, text: DS.buildEveningMessage(s, label), flex: DS.buildEveningFlex(s, label, { dashboardUrl: DAILY_SUMMARY_DASHBOARD_URL }) };
   }
-  const plan = DS.buildMorningPlan({ today: filterByDate(rows, today), yesterdayLogs: DS.dedupeLatest(logs.filter((l) => l.date === bangkokDate(-1))) });
+  // รายงานแอดมินรวมใบเดียวตอนเช้า (cfg.morning.consolidated): + ผลตรวจห้องเมื่อวาน + ความผิดปกติ (เมื่อเปิด ANOMALY_ALERTS_ENABLED)
+  let yesterdayEvening = null, anomalies = [];
+  if (cfg.morning.consolidated) {
+    const yDate = bangkokDate(-1);
+    yesterdayEvening = DS.buildEveningSummary({ date: yDate, expectedRooms: filterByDate(rows, yDate).checkOuts.map((r) => r.room), logs });
+    if (cfg.evening.aiSummary && yesterdayEvening.notes.length) {
+      try { const ai = await aiSummarizeNotes(yesterdayEvening.notes); if (ai) yesterdayEvening = DS.applyAiNotes(yesterdayEvening, ai); else warnings.push("AI สรุปหมายเหตุไม่พร้อม (ไม่ได้ตั้ง ANTHROPIC_API_KEY?)"); }
+      catch (e) { warnings.push("AI สรุปหมายเหตุไม่สำเร็จ: " + e.message); }
+    }
+    if (ANOMALY_ALERTS_ENABLED) {
+      try { anomalies = AN.detect({ rows, logs: [], today, tomorrow: bangkokDate(1), hour: 0, normalizeDate }); }   // hour 0 = ไม่ตรวจ "ไม่มีรายงานวันนี้" (ผลตรวจเมื่อวานอยู่ในส่วนของมันแล้ว)
+      catch (e) { warnings.push("ตรวจความผิดปกติไม่สำเร็จ: " + e.message); }
+    }
+  }
+  const plan = DS.buildMorningPlan({ today: filterByDate(rows, today), yesterdayLogs: DS.dedupeLatest(logs.filter((l) => l.date === bangkokDate(-1))), yesterdayEvening, anomalies });
   let prices = null, priceWarning = "";
   if (cfg.morning.includePrices) {
     try {
@@ -587,8 +601,8 @@ async function buildDailySummary(kind, settings) {
 }
 
 // ─── ตรวจความผิดปกติ (จองซ้อน / ยังไม่ระบุเลขห้อง / เช็คเอาท์แล้วไม่มีรายงาน) ──────────────
-// ปิดไว้เป็นค่าเริ่มต้น — เปิดด้วย ANOMALY_ALERTS_ENABLED=true ส่งถึง ADMIN_USER เท่านั้น เฉพาะเรื่องใหม่ (วันละครั้งต่อเรื่อง)
-// ดูตัวอย่างโดยไม่ส่ง: POST /api/anomalies/run  (ค่าเริ่มต้น dryRun) · ส่งจริง: { "dryRun": false }
+// รวมอยู่ในการ์ดสรุปเช้าใบเดียว (ไม่ส่งข้อความแยก) เมื่อตั้ง ANOMALY_ALERTS_ENABLED=true — ปิดไว้เป็นค่าเริ่มต้น
+// ดูตัวอย่าง/ทดสอบ: POST /api/anomalies/run (ค่าเริ่มต้น dryRun · { "dryRun": false } = ส่งข้อความแยกทันที ใช้ตอนทดสอบเท่านั้น)
 const AN = require("./anomalies");
 const ANOMALY_ALERTS_ENABLED = process.env.ANOMALY_ALERTS_ENABLED === "true";
 const ANOMALY_REPORT_AFTER_HOUR = Number(process.env.ANOMALY_REPORT_AFTER_HOUR) || 15;
@@ -610,10 +624,6 @@ async function runAnomalyCheck({ dryRun = true } = {}) {
   fresh.forEach((i) => _anomalyMem.ids.add(i.id));
   await redisSet(key, ((await redisGet(key)) || []).concat(fresh.map((i) => i.id)));
   return Object.assign(base, { sent: true });
-}
-async function runAnomalyCheckSafe() {
-  try { const r = await runAnomalyCheck({ dryRun: false }); console.log("[anomalies]", r.sent ? "sent " + r.fresh : "none new (" + r.total + " total)"); }
-  catch (e) { console.error("[anomalies] error: " + e.message); }
 }
 
 // ── ตั้งค่า/ประวัติ (เก็บใน Redis) ──
@@ -654,6 +664,7 @@ async function runDailySummary(kind, { dryRun = false, force = false } = {}) {
   const settings = await loadDailySettings();
   if (!dryRun && !force) {
     if (!settings[kind].enabled) return { kind, skipped: "disabled" };
+    if (kind === "evening" && settings.morning.consolidated) return { kind, skipped: "merged-into-morning" };   // รวมไว้ในการ์ดเช้าแล้ว
     // ตัดสินใจแล้ววันละครั้ง (ส่งหรือเลือกไม่ส่ง) — กัน cron + backstop ยิงซ้ำ
     if ((await redisGet(flagKey)) === today) return { kind, skipped: "decided-today" };
   }
@@ -705,6 +716,7 @@ async function dailySummaryTick() {
   const hhmm = new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit" });
   const nowMin = Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
   for (const kind of ["morning", "evening"]) {
+    if (kind === "evening" && settings.morning.consolidated) continue;   // การ์ดเย็นรวมไว้ในการ์ดเช้าแล้ว
     if (!settings[kind].enabled || !DS.isDue(settings[kind].time, nowMin)) continue;
     if (Date.now() - (_dsLastAttempt[kind] || 0) < 10 * 60000) continue;
     _dsLastAttempt[kind] = Date.now();
@@ -2361,11 +2373,6 @@ try {
 if (DAILY_SUMMARY_ENABLED) {
   cron.schedule("* * * * *", () => dailySummaryTick().catch((e) => console.error("[daily-summary] tick error:", e.message)), { timezone: "Asia/Bangkok" });
   console.log("[CRON] daily summary ticker registered (เวลาส่งตามการตั้งค่าในแดชบอร์ด)");
-}
-// ตรวจความผิดปกติทุกชั่วโมง 09:05-21:05 (ปิดไว้จนกว่าจะตั้ง ANOMALY_ALERTS_ENABLED=true)
-if (ANOMALY_ALERTS_ENABLED) {
-  cron.schedule("5 9-21 * * *", () => runAnomalyCheckSafe(), { timezone: "Asia/Bangkok" });
-  console.log("[CRON] anomaly check registered (ทุกชั่วโมง 09:05-21:05)");
 }
 // Rent reminder: วันที่ 8-15 เตือน / วันที่ 16-20 แจ้งสิ้นสุดสัญญา (ถ้ายังไม่ชำระ) เวลา 00:05 น.
 cron.schedule("5 0 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });
