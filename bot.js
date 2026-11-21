@@ -586,6 +586,36 @@ async function buildDailySummary(kind, settings) {
   };
 }
 
+// ─── ตรวจความผิดปกติ (จองซ้อน / ยังไม่ระบุเลขห้อง / เช็คเอาท์แล้วไม่มีรายงาน) ──────────────
+// ปิดไว้เป็นค่าเริ่มต้น — เปิดด้วย ANOMALY_ALERTS_ENABLED=true ส่งถึง ADMIN_USER เท่านั้น เฉพาะเรื่องใหม่ (วันละครั้งต่อเรื่อง)
+// ดูตัวอย่างโดยไม่ส่ง: POST /api/anomalies/run  (ค่าเริ่มต้น dryRun) · ส่งจริง: { "dryRun": false }
+const AN = require("./anomalies");
+const ANOMALY_ALERTS_ENABLED = process.env.ANOMALY_ALERTS_ENABLED === "true";
+const ANOMALY_REPORT_AFTER_HOUR = Number(process.env.ANOMALY_REPORT_AFTER_HOUR) || 15;
+// ที่จำสำรองในหน่วยความจำ: ถ้า Redis ล่ม/ไม่ได้ตั้งค่า ระบบจะได้ไม่ส่งเรื่องเดิมซ้ำทุกชั่วโมง (รีสตาร์ตบอทแล้วหาย ซึ่งสูงสุดแจ้งซ้ำอีกครั้ง)
+const _anomalyMem = { date: "", ids: new Set() };
+async function runAnomalyCheck({ dryRun = true } = {}) {
+  const today = bangkokDate(0);
+  const hour = Number(new Date().toLocaleString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", hour12: false })) % 24;
+  const rows = await fetchSheetData();
+  const logs = DS.dedupeLatest(DS.parseCheckoutLog(await fetchCheckoutLogCsv()).filter((l) => l.date === today && l.room !== "363"));
+  const all = AN.detect({ rows, logs, today, tomorrow: bangkokDate(1), hour, normalizeDate, reportAfterHour: ANOMALY_REPORT_AFTER_HOUR });
+  const key = "anomaly_sent_" + today;
+  if (_anomalyMem.date !== today) { _anomalyMem.date = today; _anomalyMem.ids = new Set(); }
+  const fresh = AN.filterNew(all, ((await redisGet(key)) || []).concat(Array.from(_anomalyMem.ids)));
+  const base = { date: today, hour, total: all.length, fresh: fresh.length, items: fresh };
+  if (dryRun || !fresh.length) return Object.assign(base, { sent: false });
+  if (!ADMIN_USER) throw new Error("ไม่ได้ตั้ง ADMIN_USER_ID");
+  await linePush(ADMIN_USER, [{ type: "text", text: AN.buildAlertText(fresh, formatThaiDate(today)) }]);
+  fresh.forEach((i) => _anomalyMem.ids.add(i.id));
+  await redisSet(key, ((await redisGet(key)) || []).concat(fresh.map((i) => i.id)));
+  return Object.assign(base, { sent: true });
+}
+async function runAnomalyCheckSafe() {
+  try { const r = await runAnomalyCheck({ dryRun: false }); console.log("[anomalies]", r.sent ? "sent " + r.fresh : "none new (" + r.total + " total)"); }
+  catch (e) { console.error("[anomalies] error: " + e.message); }
+}
+
 // ── ตั้งค่า/ประวัติ (เก็บใน Redis) ──
 const DAILY_SETTINGS_KEY = "daily_summary_settings";
 let _dailySettingsCache = { at: 0, v: null };
@@ -2182,6 +2212,10 @@ app.get("/api/daily-summary/history", adminAuth, async (req, res) => {
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 // ทดสอบสรุปประจำวัน: ค่าเริ่มต้น dryRun (สร้างข้อความ ไม่ส่ง) — ส่งจริงต้องระบุ {"dryRun": false}
+app.post("/api/anomalies/run", adminAuth, async (req, res) => {
+  try { res.json({ ok: true, enabled: ANOMALY_ALERTS_ENABLED, ...(await runAnomalyCheck({ dryRun: (req.body || {}).dryRun !== false })) }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 app.post("/api/daily-summary/run", adminAuth, async (req, res) => {
   const body = req.body || {};
   const kind = body.kind === "morning" ? "morning" : "evening";
@@ -2327,6 +2361,11 @@ try {
 if (DAILY_SUMMARY_ENABLED) {
   cron.schedule("* * * * *", () => dailySummaryTick().catch((e) => console.error("[daily-summary] tick error:", e.message)), { timezone: "Asia/Bangkok" });
   console.log("[CRON] daily summary ticker registered (เวลาส่งตามการตั้งค่าในแดชบอร์ด)");
+}
+// ตรวจความผิดปกติทุกชั่วโมง 09:05-21:05 (ปิดไว้จนกว่าจะตั้ง ANOMALY_ALERTS_ENABLED=true)
+if (ANOMALY_ALERTS_ENABLED) {
+  cron.schedule("5 9-21 * * *", () => runAnomalyCheckSafe(), { timezone: "Asia/Bangkok" });
+  console.log("[CRON] anomaly check registered (ทุกชั่วโมง 09:05-21:05)");
 }
 // Rent reminder: วันที่ 8-15 เตือน / วันที่ 16-20 แจ้งสิ้นสุดสัญญา (ถ้ายังไม่ชำระ) เวลา 00:05 น.
 cron.schedule("5 0 * * *", () => runRentReminder(), { timezone: "Asia/Bangkok" });
