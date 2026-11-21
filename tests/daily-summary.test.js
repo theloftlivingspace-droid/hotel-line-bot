@@ -212,3 +212,37 @@ console.log("daily-summary tests OK");
   assert2.ok(JSON.stringify(D.buildEveningFlex(s, "20 พ.ย.")).includes("👉"));
   console.log("daily-summary next-actions tests OK");
 }
+
+// ── รายงานแอดมินรวมใบเดียวตอนเช้า ──
+(function consolidatedMorningTests() {
+  const assert2 = require("assert");
+  assert2.strictEqual(D.normalizeSettings(null).morning.consolidated, true);
+  assert2.strictEqual(D.normalizeSettings({ morning: { consolidated: false } }).morning.consolidated, false);
+  const today = { checkIns: [{ room: "203" }], checkOuts: [], stayOvers: [] };
+  const rec = (o) => Object.assign({ status: "normal", ready: "พร้อม", damages: [], repairs: [], isCritical: false, leftBehind: "", extraNote: "", date: "2026-11-19", room: "205" }, o);
+  const ev = D.buildEveningSummary({ date: "2026-11-19", expectedRooms: ["205", "206"], logs: [rec({ repairs: ["ทาสี"] })] });
+  const an = [{ id: "overlap:204:A:B", severity: "high", type: "overlap", text: "ห้อง 204 จองซ้อนกัน: A กับ B" }];
+  const p = D.buildMorningPlan({ today, yesterdayLogs: [], yesterdayEvening: ev, anomalies: an });
+  const txt = D.buildMorningMessage(p, "20 พ.ย.");
+  assert2.ok(txt.includes("📋 ผลตรวจห้องเมื่อวาน") && txt.includes("ยังไม่มีรายงาน: ห้อง 206") && txt.includes("👉 เปิดงานซ่อม"), txt);
+  assert2.ok(txt.includes("⚠️ ความผิดปกติ 1 เรื่อง") && txt.includes("🔴 ห้อง 204"), txt);
+  const fx = JSON.stringify(D.buildMorningFlex(p, "20 พ.ย.", {}));
+  assert2.ok(fx.includes("ผลตรวจห้องเมื่อวาน") && fx.includes("ความผิดปกติ 1 เรื่อง"));
+  // การ์ดกลุ่มแม่บ้านไม่เปลี่ยน: ไม่มีผลตรวจเมื่อวาน/ความผิดปกติ
+  const g = D.buildMorningMessage(p, "20 พ.ย.", { audience: "group" });
+  assert2.ok(!g.includes("ผลตรวจห้องเมื่อวาน") && !g.includes("ความผิดปกติ"));
+  assert2.ok(!JSON.stringify(D.buildMorningFlex(p, "20 พ.ย.", { audience: "group" })).includes("ความผิดปกติ"));
+  // เมื่อวานเรียบร้อย → บรรทัดเดียว ไม่ซ้ำกับส่วนค้างจากเมื่อวาน
+  const ok = D.buildEveningSummary({ date: "2026-11-19", expectedRooms: ["205"], logs: [rec({})] });
+  const t2 = D.buildMorningMessage(D.buildMorningPlan({ today, yesterdayLogs: [], yesterdayEvening: ok, anomalies: [] }), "20 พ.ย.");
+  assert2.ok(t2.includes("✅ ทุกห้องพร้อม ไม่มีเรื่องต้องตาม") && !t2.includes("ค้างจากเมื่อวาน"));
+  // ส่งเมื่อมีแต่เรื่องเมื่อวาน/ความผิดปกติ แม้วันนี้ไม่มีเช็คอิน/เอาท์ · ไม่ส่งเมื่อว่างเปล่าทั้งหมด
+  const empty = { checkIns: [], checkOuts: [], stayOvers: [] };
+  assert2.strictEqual(D.shouldSendMorning(D.buildMorningPlan({ today: empty, yesterdayLogs: [], yesterdayEvening: ev, anomalies: [] })), true);
+  assert2.strictEqual(D.shouldSendMorning(D.buildMorningPlan({ today: empty, yesterdayLogs: [], yesterdayEvening: ok, anomalies: an })), true);
+  assert2.strictEqual(D.shouldSendMorning(D.buildMorningPlan({ today: empty, yesterdayLogs: [], yesterdayEvening: ok, anomalies: [] })), false);
+  // ไม่ส่ง yesterdayEvening (เช่น consolidated=false) → พฤติกรรมเดิม
+  const old = D.buildMorningMessage(D.buildMorningPlan({ today, yesterdayLogs: [rec({ isCritical: true })] }), "20 พ.ย.");
+  assert2.ok(old.includes("ค้างจากเมื่อวาน"));
+  console.log("daily-summary consolidated-morning tests OK");
+})();

@@ -155,15 +155,34 @@ function buildEveningMessage(s, dateLabel) {
 // ─── แผนเช้า ───
 // today = { checkIns, checkOuts, stayOvers } จาก filterByDate(rows, วันนี้)
 // yesterdayLogs = records ของเมื่อวาน (หลัง dedupe) ใช้หา "ค้างจากเมื่อวาน"
-function buildMorningPlan({ today, yesterdayLogs }) {
+function buildMorningPlan({ today, yesterdayLogs, yesterdayEvening, anomalies }) {
   const ins = new Set(today.checkIns.map((r) => roomNum(r.room)));
   const turnover = [...new Set(today.checkOuts.map((r) => roomNum(r.room)).filter((r) => ins.has(r)))];
   const carry = (yesterdayLogs || [])
     .map((l) => ({ room: l.room, reasons: followUpReasons(l).filter((x) => /ยังไม่แจ้ง|วิกฤต/.test(x)) }))
     .filter((c) => c.reasons.length);
-  return { checkIns: today.checkIns.length, checkOuts: today.checkOuts.length, stayOvers: (today.stayOvers || []).length, turnover, carry };
+  // yesterday = สรุปผลตรวจห้องของเมื่อวาน (ใช้ buildEveningSummary) — ถ้ามี จะแทนส่วน "ค้างจากเมื่อวาน" ในการ์ดแอดมิน
+  const yesterday = yesterdayEvening && (yesterdayEvening.expected > 0 || yesterdayEvening.inspected > 0) ? yesterdayEvening : null;
+  return { checkIns: today.checkIns.length, checkOuts: today.checkOuts.length, stayOvers: (today.stayOvers || []).length, turnover, carry, yesterday, anomalies: anomalies || [] };
 }
-function shouldSendMorning(p) { return p.checkIns + p.checkOuts + p.stayOvers > 0 || p.carry.length > 0; }
+function shouldSendMorning(p) {
+  return p.checkIns + p.checkOuts + p.stayOvers > 0 || p.carry.length > 0 || (p.yesterday ? shouldSendEvening(p.yesterday) : false) || (p.anomalies || []).length > 0;
+}
+// ส่วน "ผลตรวจห้องเมื่อวาน" ในการ์ดเช้า (ข้อความ) — ทุกห้องเรียบร้อยให้แค่บรรทัดเดียว
+function yesterdayText(y) {
+  let m = "\n📋 ผลตรวจห้องเมื่อวาน: ตรวจแล้ว " + y.inspected + (y.expected ? " จาก " + y.expected : "") + " ห้อง · พร้อม " + y.ready.length + "\n";
+  if (!shouldSendEvening(y)) return m + "✅ ทุกห้องพร้อม ไม่มีเรื่องต้องตาม\n";
+  if (y.notReady.length) m += "⚠️ ไม่พร้อม: " + y.notReady.map((x) => "ห้อง " + x.room + " (" + x.reason + ")").join(", ") + "\n";
+  if (y.missing.length) m += "❓ ยังไม่มีรายงาน: ห้อง " + y.missing.join(", ") + "\n";
+  for (const f of y.followUps.slice(0, 6)) {
+    m += "📌 ห้อง " + f.room + " — " + f.reasons.join(" / ") + "\n";
+    if (f.actions && f.actions.length) m += "   👉 " + f.actions.join(" / ") + "\n";
+    if (f.ai) m += "   🤖 " + f.ai + "\n";
+    else if (f.note) m += "   📝 " + clip(f.note.replace(/\s+/g, " "), 80) + "\n";
+  }
+  if (y.followUps.length > 6) m += "และอีก " + (y.followUps.length - 6) + " ห้อง ดูในแดชบอร์ด\n";
+  return m;
+}
 function buildMorningMessage(p, dateLabel, opts) {
   const o = opts || {}, group = o.audience === "group";
   let m = "🌅 แผนวันนี้\n📅 " + dateLabel + "\n" + SEP + "\n";
@@ -172,9 +191,14 @@ function buildMorningMessage(p, dateLabel, opts) {
   if (p.turnover.length) m += "\n⏱ ทำก่อน (เช็คเอาท์แล้วมีแขกใหม่เข้าวันเดียวกัน): ห้อง " + p.turnover.join(", ") + "\n";
   if (!group && o.prices) m += "\n💰 ราคาเป้าหมายคืนนี้: " + formatPrices(o.prices) + "\n";
   if (!group && o.priceWarning) m += "\n⚠️ " + o.priceWarning + "\n";
-  if (!group && p.carry.length) {
+  if (!group && p.yesterday) m += yesterdayText(p.yesterday);
+  else if (!group && p.carry.length) {
     m += "\n📌 ค้างจากเมื่อวาน\n";
     for (const c of p.carry) m += "• ห้อง " + c.room + " — " + c.reasons.join(" / ") + "\n";
+  }
+  if (!group && p.anomalies && p.anomalies.length) {
+    m += "\n⚠️ ความผิดปกติ " + p.anomalies.length + " เรื่อง\n";
+    for (const a of p.anomalies.slice(0, 8)) m += (a.severity === "high" ? "🔴 " : "🟡 ") + a.text + "\n";
   }
   return m + SEP + "\n💌 ส่งอัตโนมัติโดยระบบ";
 }
@@ -206,8 +230,20 @@ function buildMorningFlex(p, dateLabel, opts) {
   if (p.turnover.length) callouts.push(fxCallout("⏱ ทำก่อน", "ห้อง " + p.turnover.join(", ") + " เช็คเอาท์แล้วมีแขกใหม่เข้าวันเดียวกัน", C.amberBg, C.amberTx));
   if (!group && o.prices) callouts.push(fxCallout("💰 ราคาเป้าหมายคืนนี้", formatPrices(o.prices), "#EAF0FA", C.navy));
   if (!group && o.priceWarning) callouts.push(fxCallout("⚠️ ระบบตั้งราคา", o.priceWarning, C.redBg, C.redTx));
-  if (!group && p.carry.length) callouts.push(fxCallout("📌 ค้างจากเมื่อวาน", p.carry.map((c) => "ห้อง " + c.room + " — " + c.reasons.join(" / ")).join("\n"), C.redBg, C.redTx));
-  const alt = "แผนวันนี้: เช็คเอาท์ " + p.checkOuts + " ห้อง, เช็คอิน " + p.checkIns + " ห้อง" + (p.turnover.length ? ", ทำก่อน ห้อง " + p.turnover.join(", ") : "");
+  if (!group && p.yesterday) {
+    const y = p.yesterday;
+    rows.push(fxRow("ผลตรวจห้องเมื่อวาน", "พร้อม " + y.ready.length + (y.expected ? "/" + y.expected : "") + " ห้อง"));
+    if (y.notReady.length) callouts.push(fxCallout("⚠️ เมื่อวานไม่พร้อม", y.notReady.map((x) => "ห้อง " + x.room + " (" + x.reason + ")").join(", "), C.amberBg, C.amberTx));
+    if (y.missing.length) callouts.push(fxCallout("❓ เมื่อวานยังไม่มีรายงานตรวจห้อง", "ห้อง " + y.missing.join(", "), C.amberBg, C.amberTx));
+    for (const f of y.followUps.slice(0, 4)) {
+      const note = f.ai ? "\n🤖 " + f.ai : f.note ? "\n📝 " + clip(f.note.replace(/\s+/g, " "), 100) : "";
+      const act = f.actions && f.actions.length ? "\n👉 " + f.actions.join(" / ") : "";
+      callouts.push(fxCallout("📌 ห้อง " + f.room + " — ต้องตามต่อ", f.reasons.join(" / ") + act + note, C.redBg, C.redTx));
+    }
+    if (y.followUps.length > 4) callouts.push(fx("และอีก " + (y.followUps.length - 4) + " ห้อง ดูในแดชบอร์ด", { size: "xs" }));
+  } else if (!group && p.carry.length) callouts.push(fxCallout("📌 ค้างจากเมื่อวาน", p.carry.map((c) => "ห้อง " + c.room + " — " + c.reasons.join(" / ")).join("\n"), C.redBg, C.redTx));
+  if (!group && p.anomalies && p.anomalies.length) callouts.push(fxCallout("⚠️ ความผิดปกติ " + p.anomalies.length + " เรื่อง", p.anomalies.slice(0, 5).map((a) => (a.severity === "high" ? "🔴 " : "🟡 ") + a.text).join("\n"), C.redBg, C.redTx));
+  const alt = "แผนวันนี้: เช็คเอาท์ " + p.checkOuts + " ห้อง, เช็คอิน " + p.checkIns + " ห้อง" + (p.turnover.length ? ", ทำก่อน ห้อง " + p.turnover.join(", ") : "") + (!group && p.anomalies && p.anomalies.length ? ", ความผิดปกติ " + p.anomalies.length : "") + (!group && p.yesterday && shouldSendEvening(p.yesterday) ? ", เมื่อวานต้องตามต่อ" : "");
   // ข้อความถึงกลุ่มแม่บ้านไม่มีปุ่มแดชบอร์ด
   return fxBubble({ title: "แผนวันนี้", sub: dateLabel, rows, callouts, altText: alt, dashboardUrl: group ? "" : o.dashboardUrl });
 }
@@ -215,7 +251,7 @@ function buildMorningFlex(p, dateLabel, opts) {
 
 // ─── การตั้งค่า (ตั้งจากแดชบอร์ด) + ตัวช่วยกำหนดเวลา/ประวัติ ───
 const DEFAULT_SETTINGS = {
-  morning: { enabled: true, time: "07:30", recipients: "admin", includePrices: false },
+  morning: { enabled: true, time: "07:30", recipients: "admin", includePrices: false, consolidated: true }, // consolidated: รวมรายงานแอดมินทั้งหมดไว้ในการ์ดเช้าใบเดียว (ผลตรวจห้องเมื่อวาน + ความผิดปกติ) และงดการ์ดเย็น
   evening: { enabled: true, time: "18:30", onlyWhenFlagged: true, aiSummary: false },
 };
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
