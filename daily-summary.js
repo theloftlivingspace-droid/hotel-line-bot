@@ -97,6 +97,16 @@ function followUpReasons(rec) {
   return reasons;
 }
 
+// Ops Copilot (แบบกฎ ไม่ใช้ AI): เสนอ "ขั้นต่อไป" ต่อเรื่องที่ต้องตามต่อ — เสนอเท่านั้น ไม่ลงมือทำและไม่สัญญาอะไรกับแขก
+function suggestActions(rec) {
+  const out = [];
+  if (isBlocked(rec) || rec.isCritical) out.push("ตรวจ/แก้ก่อนขายห้อง");
+  if (/ยังไม่แจ้ง/.test(rec.leftBehind)) out.push("แจ้งแขกเรื่องของลืม");
+  if (rec.damages.some((d) => !/late\s*checkout/i.test(d))) out.push("ถ่ายรูป ประเมินค่าเสียหาย แล้วแจ้งแขก");
+  if (rec.repairs.length) out.push("เปิดงานซ่อม");
+  return out;
+}
+
 // ─── สรุปเย็น ───
 // expectedRooms = เลขห้องที่ต้องเช็คเอาท์วันนี้ (จากชีทจอง ตัดยกเลิก/ต่อพักแล้ว)
 // logs = ผลจาก parseCheckoutLog
@@ -108,7 +118,7 @@ function buildEveningSummary({ date, expectedRooms, logs }) {
   const ready = today.filter(isReadyForGuests);
   const notReady = today.filter((l) => !isReadyForGuests(l)).map((l) => ({ room: l.room, reason: notReadyReason(l) }));
   const followUps = today
-    .map((l) => ({ room: l.room, reasons: followUpReasons(l), note: l.extraNote }))
+    .map((l) => ({ room: l.room, reasons: followUpReasons(l), actions: suggestActions(l), note: l.extraNote }))
     .filter((f) => f.reasons.length);
   const notes = today
     .map((l) => ({ room: l.room, text: [l.extraNote, ...l.damages.filter((d) => !/late\s*checkout/i.test(d)), ...l.repairs.map((x) => "ซ่อม: " + x)].filter(Boolean).join(" | ") }))
@@ -134,6 +144,7 @@ function buildEveningMessage(s, dateLabel) {
     m += "\n📌 ต้องตามต่อ\n";
     for (const f of s.followUps) {
       m += "• ห้อง " + f.room + " — " + f.reasons.join(" / ") + "\n";
+      if (f.actions && f.actions.length) m += "   👉 " + f.actions.join(" / ") + "\n";
       if (f.ai) m += "   🤖 " + f.ai + "\n";
       else if (f.note) m += "   📝 " + clip(f.note.replace(/\s+/g, " "), 80) + "\n";
     }
@@ -179,7 +190,8 @@ function buildEveningFlex(s, dateLabel, opts) {
   if (s.missing.length) callouts.push(fxCallout("❓ ยังไม่มีรายงานตรวจห้อง", "ห้อง " + s.missing.join(", "), C.amberBg, C.amberTx));
   for (const f of s.followUps.slice(0, 5)) {
     const note = f.ai ? "\n🤖 " + f.ai : f.note ? "\n📝 " + clip(f.note.replace(/\s+/g, " "), 120) : "";
-    callouts.push(fxCallout("📌 ห้อง " + f.room + " — ต้องตามต่อ", f.reasons.join(" / ") + note, C.redBg, C.redTx));
+    const act = f.actions && f.actions.length ? "\n👉 " + f.actions.join(" / ") : "";
+    callouts.push(fxCallout("📌 ห้อง " + f.room + " — ต้องตามต่อ", f.reasons.join(" / ") + act + note, C.redBg, C.redTx));
   }
   if (s.followUps.length > 5) callouts.push(fx("และอีก " + (s.followUps.length - 5) + " ห้อง ดูรายละเอียดในแดชบอร์ด", { size: "xs" }));
   const alt = "ผลตรวจห้องวันนี้: พร้อม " + s.ready.length + " ห้อง" + (s.notReady.length ? ", ไม่พร้อม " + s.notReady.length : "") + (s.missing.length ? ", ยังไม่มีรายงาน " + s.missing.length : "") + (s.followUps.length ? ", ต้องตามต่อ " + s.followUps.length : "");
@@ -315,7 +327,7 @@ function applyAiNotes(s, aiMap) {
 
 module.exports = {
   parseCsv, parseCheckoutLog, dedupeLatest, isReadyForGuests, followUpReasons,
-  buildEveningSummary, shouldSendEvening, buildEveningMessage,
+  suggestActions, buildEveningSummary, shouldSendEvening, buildEveningMessage,
   buildMorningPlan, shouldSendMorning, buildMorningMessage, roomNum,
   buildEveningFlex, buildMorningFlex,
   DEFAULT_SETTINGS, normalizeSettings, isDue, shouldSendEveningWith, historyEntry,
