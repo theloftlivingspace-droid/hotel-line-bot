@@ -196,3 +196,19 @@ console.log("daily-summary tests OK");
   assert.ok(!JSON.stringify(D.buildMorningFlex(plan, "x", { audience: "group", priceWarning: "หยุดทำงาน" })).includes("หยุดทำงาน"));
   console.log("daily-summary stale-rates tests OK");
 })();
+
+// ── Ops Copilot (กฎ): ขั้นต่อไปของเรื่องที่ต้องตามต่อ ──
+{
+  const assert2 = require("assert");
+  const rec = (o) => Object.assign({ status: "normal", ready: "พร้อม", damages: [], repairs: [], isCritical: false, leftBehind: "", extraNote: "" }, o);
+  assert2.deepStrictEqual(D.suggestActions(rec({})), []);
+  assert2.deepStrictEqual(D.suggestActions(rec({ damages: ["Late Checkout"] })), []);
+  assert2.deepStrictEqual(D.suggestActions(rec({ leftBehind: "ยังไม่แจ้ง" })), ["แจ้งแขกเรื่องของลืม"]);
+  assert2.deepStrictEqual(D.suggestActions(rec({ status: "block", repairs: ["แอร์"] })), ["ตรวจ/แก้ก่อนขายห้อง", "เปิดงานซ่อม"]);
+  const logs = [Object.assign({ uid: "u", date: "2026-11-20", room: "205", timestamp: 1 }, rec({ damages: ["ผนังเสียหาย"], repairs: ["ทาสี"] }))];
+  const s = D.buildEveningSummary({ date: "2026-11-20", expectedRooms: ["205"], logs });
+  assert2.ok(s.followUps[0].actions.includes("เปิดงานซ่อม"));
+  assert2.ok(D.buildEveningMessage(s, "20 พ.ย.").includes("👉"));
+  assert2.ok(JSON.stringify(D.buildEveningFlex(s, "20 พ.ย.")).includes("👉"));
+  console.log("daily-summary next-actions tests OK");
+}
