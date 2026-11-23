@@ -16,6 +16,7 @@ const {
   buildGuestIndex, lookupGuests, isGuestOnlyEmail, guestsLine, planGuestFills, guestColIndexes, guestsFromRow,
   writeGuestsToRow, writeGuestsToRows,
 } = require("./guests");
+const { buildRoomNameIndex, fillRoomName } = require("./room-name");
 const FC = require("./flex-cards"); // การ์ด navy/ทอง
 
 const GMAIL_USER   = process.env.GMAIL_USER;
@@ -1104,10 +1105,17 @@ async function _syncEmailsImpl() {
 
     let newCount = 0;
     const heldRooms = new Set(); // ห้องที่ assign ไปแล้วในรอบนี้ (กันชนกันเมื่อมีหลาย booking พร้อมกัน)
-    for (const email of emails) {
+    // parse ทุกฉบับก่อน เพื่อให้อีเมลจองคู่ (ฉบับสั้น + ฉบับ Detail) แชร์ชื่อห้องกันได้
+    // ไม่ว่าฉบับไหนจะถูกอ่านก่อน (ดู room-name.js)
+    const parsedEmails = emails.map((e) => (isGuestOnlyEmail(e) ? null : parseEmail(e)));
+    const roomNameIndex = buildRoomNameIndex(parsedEmails);
+    for (const [emailIdx, email] of emails.entries()) {
       if (isGuestOnlyEmail(email)) continue; // อีเมล Trip.com ใช้ดึงจำนวนแขกอย่างเดียว ไม่ใช่อีเมลจอง
-      const res = parseEmail(email);
+      const res = parsedEmails[emailIdx];
       if (!res) continue;
+      if (fillRoomName(res, roomNameIndex)) {
+        console.log("roomName: เติมจากอีเมลคู่ -> " + res.roomName + " (" + res.resId + ")");
+      }
       res.guests = lookupGuests(guestIndex, res);
       parsedForGuests.push({ resId: res.resId, guests: res.guests });
       if (notifiedIds.has(res.resId)) {
